@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   ActiveTab,
   AttendanceRecord,
@@ -12,6 +12,9 @@ import {
   ToastNotification,
   GtkServiceRequest,
   ActivityLog,
+  BiometricLog,
+  AppBackupData,
+  DutyAssignment,
 } from './types';
 import {
   INITIAL_ATTENDANCE_RECORDS,
@@ -24,6 +27,8 @@ import {
   INITIAL_NOTIFICATIONS,
   INITIAL_GTK_SERVICES,
   INITIAL_ACTIVITY_LOGS,
+  INITIAL_BIOMETRIC_LOGS,
+  INITIAL_DUTY_ROSTER,
   getTodayDateString,
 } from './data/schoolData';
 import { Sidebar } from './components/Sidebar';
@@ -31,20 +36,27 @@ import { NotificationBanner } from './components/NotificationBanner';
 import { DashboardStats } from './components/DashboardStats';
 import { QrScannerTab } from './components/QrScannerTab';
 import { SelfieGpsTab } from './components/SelfieGpsTab';
+import { BiometricLogsTab } from './components/BiometricLogsTab';
+import { DailyBackupPromptModal } from './components/DailyBackupPromptModal';
 import { BatchClassAttendance } from './components/BatchClassAttendance';
 import { RekapitulasiView } from './components/RekapitulasiView';
+import { BKDTaliabuAutomationTab } from './components/BKDTaliabuAutomationTab';
 import { LeaveRequestsTab } from './components/LeaveRequestsTab';
 import { GtkServicesTab } from './components/GtkServicesTab';
 import { GoogleWorkspaceTab } from './components/GoogleWorkspaceTab';
 import { ActivityLogsTab } from './components/ActivityLogsTab';
 import { StudentManagementTab } from './components/StudentManagementTab';
 import { TeacherManagementTab } from './components/TeacherManagementTab';
+import { TeacherDutyRosterTab } from './components/TeacherDutyRosterTab';
 import { StudentCardsTab } from './components/StudentCardsTab';
 import { AcademicCalendarTab } from './components/AcademicCalendarTab';
 import { ConfigTab } from './components/ConfigTab';
 import { PrintModal } from './components/PrintModal';
-import { School, ShieldCheck, Sparkles } from 'lucide-react';
+import { QuickActionsFab } from './components/QuickActionsFab';
+import { SystemSyncStatusFooter } from './components/SystemSyncStatusFooter';
+import { School, ShieldCheck, Sparkles, HardDrive, AlertOctagon, Lock } from 'lucide-react';
 import { playBeepSound, formatDateIndo } from './utils/soundAndDate';
+import { saveBackupToFirestore } from './lib/firebase';
 
 export default function App() {
   const todayDate = getTodayDateString();
@@ -131,10 +143,44 @@ export default function App() {
     }
   });
 
+  const [biometricLogs, setBiometricLogs] = useState<BiometricLog[]>(() => {
+    try {
+      const saved = localStorage.getItem('school_presensi_biometric_logs');
+      return saved ? JSON.parse(saved) : INITIAL_BIOMETRIC_LOGS;
+    } catch {
+      return INITIAL_BIOMETRIC_LOGS;
+    }
+  });
+
+  const [dutyRoster, setDutyRoster] = useState<DutyAssignment[]>(() => {
+    try {
+      const saved = localStorage.getItem('school_presensi_duty_roster');
+      return saved ? JSON.parse(saved) : INITIAL_DUTY_ROSTER;
+    } catch {
+      return INITIAL_DUTY_ROSTER;
+    }
+  });
+
+  const [isSystemLocked, setIsSystemLocked] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('school_presensi_is_system_locked') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const [lastHandshakeTime, setLastHandshakeTime] = useState<Date>(() => new Date());
+
   const [notifications, setNotifications] = useState<ToastNotification[]>(() => {
     try {
       const saved = localStorage.getItem('school_presensi_notifs');
-      return saved ? JSON.parse(saved) : INITIAL_NOTIFICATIONS;
+      const loaded: ToastNotification[] = saved ? JSON.parse(saved) : INITIAL_NOTIFICATIONS;
+      const seen = new Set<string>();
+      return loaded.filter((n) => {
+        if (!n || !n.id || seen.has(n.id)) return false;
+        seen.add(n.id);
+        return true;
+      });
     } catch {
       return INITIAL_NOTIFICATIONS;
     }
@@ -144,6 +190,23 @@ export default function App() {
   const [userRole, setUserRole] = useState<UserRole>('admin');
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
+  const [isDailyBackupModalOpen, setIsDailyBackupModalOpen] = useState(false);
+
+  // Automated Daily Backup Check: If no backup prompted today, prompt user to safeguard data
+  useEffect(() => {
+    try {
+      const lastBackupDate = localStorage.getItem('school_presensi_last_backup_prompt_date');
+      if (lastBackupDate !== todayDate) {
+        // Set a gentle 1.2s delay after page boot so user sees the interface first
+        const timer = setTimeout(() => {
+          setIsDailyBackupModalOpen(true);
+        }, 1200);
+        return () => clearTimeout(timer);
+      }
+    } catch (e) {
+      console.error('Backup check error:', e);
+    }
+  }, [todayDate]);
 
   // Sync to localStorage
   useEffect(() => {
@@ -220,11 +283,226 @@ export default function App() {
 
   useEffect(() => {
     try {
+      localStorage.setItem('school_presensi_biometric_logs', JSON.stringify(biometricLogs));
+    } catch (e) {
+      console.error(e);
+    }
+  }, [biometricLogs]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('school_presensi_duty_roster', JSON.stringify(dutyRoster));
+    } catch (e) {
+      console.error(e);
+    }
+  }, [dutyRoster]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('school_presensi_is_system_locked', String(isSystemLocked));
+    } catch (e) {
+      console.error(e);
+    }
+  }, [isSystemLocked]);
+
+  useEffect(() => {
+    try {
       localStorage.setItem('school_presensi_notifs', JSON.stringify(notifications));
     } catch (e) {
       console.error(e);
     }
   }, [notifications]);
+
+  // Biometric Logs Handler
+  const handleAddBiometricLog = (newLog: BiometricLog) => {
+    setBiometricLogs((prev) => [newLog, ...prev]);
+  };
+
+  // Duty Roster Handlers
+  const handleAddOrUpdateDuty = (duty: DutyAssignment) => {
+    setDutyRoster((prev) => {
+      const idx = prev.findIndex((d) => d.id === duty.id);
+      if (idx >= 0) {
+        const copy = [...prev];
+        copy[idx] = duty;
+        return copy;
+      }
+      return [duty, ...prev];
+    });
+
+    const notif: ToastNotification = {
+      id: `notif_duty_${Date.now()}`,
+      title: 'Jadwal Piket Diperbarui',
+      message: `${duty.teacherName} ditugaskan sebagai ${duty.roleTitle} pada hari ${duty.day.toUpperCase()}.`,
+      type: 'system',
+      timestamp: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WIB',
+      read: false,
+    };
+    setNotifications((prev) => [notif, ...prev.slice(0, 8)]);
+  };
+
+  const handleDeleteDuty = (id: string) => {
+    setDutyRoster((prev) => prev.filter((d) => d.id !== id));
+  };
+
+  // Emergency System Lockdown Toggle
+  const handleToggleSystemLock = (locked: boolean) => {
+    setIsSystemLocked(locked);
+    const notif: ToastNotification = {
+      id: `notif_lock_${Date.now()}`,
+      title: locked ? 'Emergency System Lockdown Diaktifkan' : 'Sistem Dibuka Kembali (Unlocked)',
+      message: locked
+        ? 'Input presensi manual ditangguhkan demi integritas data presensi.'
+        : 'Input presensi manual telah kembali dibuka secara normal.',
+      type: locked ? 'system' : 'system',
+      timestamp: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WIB',
+      read: false,
+    };
+    setNotifications((prev) => [notif, ...prev.slice(0, 8)]);
+  };
+
+  // Emergency Absence from Quick Actions
+  const handleAddEmergencyAbsence = (leave: LeaveRequest, newRecord?: AttendanceRecord) => {
+    setLeaves((prev) => [leave, ...prev]);
+    if (newRecord) {
+      setRecords((prev) => [newRecord, ...prev]);
+    }
+    const notif: ToastNotification = {
+      id: `notif_emg_${Date.now()}`,
+      title: 'Izin Darurat Berhasil Dicatat',
+      message: `Izin/Sakit darurat untuk ${leave.personName} telah disahkan dan dicatat langsung ke buku presensi.`,
+      type: 'leave_request',
+      timestamp: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WIB',
+      read: false,
+    };
+    setNotifications((prev) => [notif, ...prev.slice(0, 8)]);
+  };
+
+  // Realtime Cloud Handshake Sync Trigger
+  const handleTriggerHandshakeSync = async () => {
+    try {
+      const payload = generateBackupPayload();
+      await saveBackupToFirestore(payload);
+      setLastHandshakeTime(new Date());
+    } catch (e) {
+      setLastHandshakeTime(new Date());
+    }
+  };
+
+  // Full System Backup Payload Generator
+  const generateBackupPayload = useCallback((): AppBackupData => {
+    const now = new Date();
+    return {
+      id: `backup_${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(
+        now.getDate()
+      ).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`,
+      timestamp: now.toISOString(),
+      createdDate: now.toLocaleDateString('id-ID', {
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric',
+      }),
+      createdTime: now.toLocaleTimeString('id-ID'),
+      source: 'Automated Daily Backup System',
+      totalRecords: records.length,
+      totalStudents: students.length,
+      totalTeachers: teachers.length,
+      totalClasses: classes.length,
+      totalLeaves: leaves.length,
+      totalGtkServices: gtkServices.length,
+      records,
+      students,
+      teachers,
+      classes,
+      leaves,
+      gtkServices,
+      events,
+      config,
+      activityLogs,
+      biometricLogs,
+    };
+  }, [records, students, teachers, classes, leaves, gtkServices, events, config, activityLogs, biometricLogs]);
+
+  // Download Local JSON Backup file
+  const handleDownloadBackupJson = useCallback(() => {
+    const payload = generateBackupPayload();
+    const jsonStr = JSON.stringify(payload, null, 2);
+    const blob = new Blob([jsonStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const cleanSchool = config.schoolName.replace(/[^a-zA-Z0-9]/g, '_');
+    a.download = `Backup_Presensi_${cleanSchool}_${todayDate}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    try {
+      localStorage.setItem('school_presensi_last_backup_prompt_date', todayDate);
+    } catch (e) {
+      console.error(e);
+    }
+
+    const notif: ToastNotification = {
+      id: `notif_bk_${Date.now()}`,
+      title: 'Pencadangan Data Berhasil',
+      message: `File cadangan JSON (${payload.totalRecords} presensi, ${payload.totalStudents} siswa, ${payload.totalTeachers} GTK) telah berhasil diunduh ke perangkat Anda.`,
+      type: 'system',
+      timestamp: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WIB',
+      read: false,
+    };
+    setNotifications((prev) => [notif, ...prev.slice(0, 8)]);
+  }, [generateBackupPayload, config.schoolName, todayDate]);
+
+  // Cloud Firestore Backup Integration
+  const handleCloudBackup = useCallback(async (): Promise<boolean> => {
+    const payload = generateBackupPayload();
+    try {
+      const res = await saveBackupToFirestore(payload);
+      if (res.success) {
+        localStorage.setItem('school_presensi_last_backup_prompt_date', todayDate);
+        const notif: ToastNotification = {
+          id: `notif_cloud_${Date.now()}`,
+          title: 'Cloud Firestore Sync Sukses',
+          message: `Data presensi SMPN 4 Satap Taliabu Barat tersinkronisasi aman ke Cloud Firestore (${res.id}).`,
+          type: 'system',
+          timestamp: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WIB',
+          read: false,
+        };
+        setNotifications((prev) => [notif, ...prev.slice(0, 8)]);
+        return true;
+      }
+      return false;
+    } catch (err) {
+      console.error('Cloud backup error:', err);
+      return false;
+    }
+  }, [generateBackupPayload, todayDate]);
+
+  // Restore Full System Backup
+  const handleRestoreBackup = (backupData: AppBackupData) => {
+    if (backupData.config) setConfig(backupData.config);
+    if (backupData.classes) setClasses(backupData.classes);
+    if (backupData.students) setStudents(backupData.students);
+    if (backupData.teachers) setTeachers(backupData.teachers);
+    if (backupData.records) setRecords(backupData.records);
+    if (backupData.leaves) setLeaves(backupData.leaves);
+    if (backupData.gtkServices) setGtkServices(backupData.gtkServices);
+    if (backupData.events) setEvents(backupData.events);
+    if (backupData.activityLogs) setActivityLogs(backupData.activityLogs);
+    if (backupData.biometricLogs) setBiometricLogs(backupData.biometricLogs);
+
+    const notif: ToastNotification = {
+      id: `notif_rst_${Date.now()}`,
+      title: 'Pemulihan Cadangan Berhasil',
+      message: `Data presensi sekolah berhasil dipulihkan dari cadangan tanggal ${backupData.createdDate || 'sebelumnya'}.`,
+      type: 'system',
+      timestamp: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WIB',
+      read: false,
+    };
+    setNotifications((prev) => [notif, ...prev.slice(0, 8)]);
+  };
 
   // Attendance Handlers
   const handleRecordAttendance = (newRecord: AttendanceRecord) => {
@@ -434,6 +712,13 @@ export default function App() {
   };
 
   // Notification handlers
+  const handleAddNotification = useCallback((notif: ToastNotification) => {
+    setNotifications((prev) => {
+      if (prev.some((n) => n.id === notif.id)) return prev;
+      return [notif, ...prev.slice(0, 8)];
+    });
+  }, []);
+
   const handleDismissNotification = (id: string) => {
     setNotifications((prev) => prev.filter((n) => n.id !== id));
   };
@@ -540,6 +825,7 @@ export default function App() {
           onDismissToast={handleDismissNotification}
           onReviewLeave={handleReviewLeave}
           onTriggerSimulation={handleTriggerSimulation}
+          onOpenBackupPrompt={() => setIsDailyBackupModalOpen(true)}
           pendingLeaves={safeLeaves}
           activeTab={activeTab}
           setActiveTab={setActiveTab}
@@ -550,6 +836,31 @@ export default function App() {
 
         {/* Content Views */}
         <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto space-y-6">
+          {/* Emergency System Lockdown Banner */}
+          {isSystemLocked && (
+            <div className="bg-rose-500 text-white rounded-3xl p-4 sm:p-5 shadow-xl flex items-center justify-between gap-4 animate-in fade-in duration-300 border-2 border-rose-400">
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 rounded-2xl bg-white/20 flex items-center justify-center shrink-0">
+                  <Lock className="w-5 h-5 text-white" />
+                </div>
+                <div>
+                  <h4 className="font-extrabold text-sm sm:text-base">
+                    Sistem dalam Status Emergency Lockdown
+                  </h4>
+                  <p className="text-xs text-rose-100">
+                    Penginputan presensi manual disuspend sementara oleh Administrator untuk menjaga integritas data.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => handleToggleSystemLock(false)}
+                className="px-4 py-2 bg-white text-rose-700 hover:bg-rose-50 rounded-2xl text-xs font-black shrink-0 transition-colors shadow-xs"
+              >
+                Buka Kunci (Unlock)
+              </button>
+            </div>
+          )}
+
           {activeTab === 'dashboard' && (
             <DashboardStats
               records={records}
@@ -559,9 +870,12 @@ export default function App() {
               leaveRequests={leaves}
               leaves={leaves}
               config={config}
+              biometricLogs={biometricLogs}
+              currentStreak={14}
               setActiveTab={setActiveTab}
               onNavigateTab={setActiveTab}
               onOpenPrintModal={() => setIsPrintModalOpen(true)}
+              onAddNotification={handleAddNotification}
             />
           )}
 
@@ -600,6 +914,17 @@ export default function App() {
             />
           )}
 
+          {activeTab === 'duty_roster' && (
+            <TeacherDutyRosterTab
+              teachers={teachers}
+              dutyRoster={dutyRoster}
+              records={records}
+              config={config}
+              onAddOrUpdateDuty={handleAddOrUpdateDuty}
+              onDeleteDuty={handleDeleteDuty}
+            />
+          )}
+
           {activeTab === 'rekap' && (
             <RekapitulasiView
               records={records}
@@ -610,6 +935,15 @@ export default function App() {
               todayDate={todayDate}
               onDeleteRecord={handleDeleteRecord}
               onOpenPrintModal={() => setIsPrintModalOpen(true)}
+            />
+          )}
+
+          {activeTab === 'bkd_automation' && (
+            <BKDTaliabuAutomationTab
+              records={records}
+              teachers={teachers}
+              students={students}
+              config={config}
             />
           )}
 
@@ -674,6 +1008,7 @@ export default function App() {
             <StudentManagementTab
               students={students}
               classes={classes}
+              config={config}
               onAddStudent={handleAddStudent}
               onUpdateStudent={handleUpdateStudent}
               onDeleteStudent={handleDeleteStudent}
@@ -690,6 +1025,14 @@ export default function App() {
             />
           )}
 
+          {activeTab === 'biometric_logs' && (
+            <BiometricLogsTab
+              logs={biometricLogs}
+              onAddLog={handleAddBiometricLog}
+              onClearLogs={() => setBiometricLogs([])}
+            />
+          )}
+
           {activeTab === 'calendar' && (
             <AcademicCalendarTab
               events={events}
@@ -701,11 +1044,50 @@ export default function App() {
           {activeTab === 'config' && (
             <ConfigTab
               config={config}
+              records={records}
+              students={students}
+              teachers={teachers}
+              classes={classes}
+              leaves={leaves}
+              gtkServices={gtkServices}
+              events={events}
+              activityLogs={activityLogs}
+              biometricLogs={biometricLogs}
               onSaveConfig={setConfig}
               onResetToDefault={handleResetToDefault}
+              onRestoreBackup={handleRestoreBackup}
             />
           )}
         </main>
+
+        {/* Global Daily Backup Safety Prompt Modal */}
+        <DailyBackupPromptModal
+          isOpen={isDailyBackupModalOpen}
+          onClose={() => setIsDailyBackupModalOpen(false)}
+          config={config}
+          backupData={generateBackupPayload()}
+          onDownloadJson={handleDownloadBackupJson}
+          onCloudBackup={handleCloudBackup}
+          onDismissToday={() => {
+            try {
+              localStorage.setItem('school_presensi_last_backup_prompt_date', todayDate);
+            } catch (e) {
+              console.error(e);
+            }
+          }}
+        />
+
+        {/* Floating Quick Actions Speed-Dial Menu */}
+        <QuickActionsFab
+          students={students}
+          teachers={teachers}
+          records={records}
+          config={config}
+          isSystemLocked={isSystemLocked}
+          onToggleSystemLock={handleToggleSystemLock}
+          onAddEmergencyAbsence={handleAddEmergencyAbsence}
+          onNavigateTab={setActiveTab}
+        />
 
         {/* Global Modal for Document Print Preview */}
         {isPrintModalOpen && (
@@ -718,36 +1100,12 @@ export default function App() {
           />
         )}
 
-        {/* Footer */}
-        <footer className="bg-white border-t border-slate-200/80 py-6 mt-8 print:hidden">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col md:flex-row items-center justify-between gap-4 text-xs text-slate-500">
-            <div className="flex items-center space-x-2">
-              {config.logoUrl ? (
-                <img
-                  src={config.logoUrl}
-                  alt="Logo"
-                  referrerPolicy="no-referrer"
-                  className="w-5 h-5 object-contain"
-                />
-              ) : (
-                <School className="w-4 h-4 text-indigo-600" />
-              )}
-              <span className="font-bold text-slate-800">{config.schoolName}</span>
-              <span>• NPSN: {config.npsn}</span>
-            </div>
-
-            <div className="flex items-center space-x-4">
-              <span className="text-[11px]">
-                Tahun Ajaran {config.academicYear} • Semester {config.semester}
-              </span>
-              <span className="text-slate-300">|</span>
-              <span className="text-[11px] font-medium text-slate-600 flex items-center space-x-1">
-                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-                <span>Terverifikasi SIMPEG BKD & Kemendikbudristek</span>
-              </span>
-            </div>
-          </div>
-        </footer>
+        {/* Real-time System Sync Status Footer */}
+        <SystemSyncStatusFooter
+          config={config}
+          lastHandshakeTime={lastHandshakeTime}
+          onTriggerSync={handleTriggerHandshakeSync}
+        />
       </div>
     </div>
   );

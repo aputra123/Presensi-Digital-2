@@ -1,6 +1,6 @@
 {
   "name": "Remix Presensi Sekolah Digital",
-  "description": "Sistem informasi presensi digital sekolah dan portal layanan/perizinan resmi GTK dengan verifikasi ganda Kepala Sekolah dan Admin, sinkronisasi Google Workspace \u0026 Firebase.",
+  "description": "Sistem informasi presensi biometrik digital & portal perizinan resmi SMP Negeri 4 Satu Atap Taliabu Barat (Desa Pancoran, Kec. Taliabu Barat, Kab. Pulau Taliabu, Maluku Utara).",
   "requestFramePermissions": [
     "camera",
     "geolocation"

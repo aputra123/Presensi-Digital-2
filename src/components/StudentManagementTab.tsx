@@ -17,18 +17,39 @@ import {
   Upload,
   Link as LinkIcon,
   ScanFace,
+  QrCode,
+  Sparkles,
 } from 'lucide-react';
-import { Student, SchoolClass, ActiveTab } from '../types';
+import { Student, SchoolClass, ActiveTab, SchoolConfig } from '../types';
 import { formatDriveUrl, downloadCsv } from '../utils/soundAndDate';
+import { StudentQrCodeModal } from './StudentQrCodeModal';
 
 interface StudentManagementTabProps {
   students?: Student[];
   classes?: SchoolClass[];
+  config?: SchoolConfig;
   onAddStudent: (student: Student) => void;
   onUpdateStudent: (student: Student) => void;
   onDeleteStudent: (id: string) => void;
   setActiveTab: (tab: ActiveTab) => void;
 }
+
+const DEFAULT_SCHOOL_CONFIG: SchoolConfig = {
+  schoolName: 'SMP NEGERI 4 SATU ATAP TALIABU BARAT',
+  npsn: '69989028',
+  address: 'Desa Pancoran, Kec. Taliabu Barat, Kab. Pulau Taliabu, Maluku Utara',
+  principalName: 'La Ode Aliudin, S.Pd',
+  principalNip: '197805122005011008',
+  academicYear: '2026/2027',
+  semester: 'Ganjil',
+  checkInStart: '06:30',
+  checkInDeadline: '07:30',
+  checkOutStart: '14:00',
+  schoolLat: -1.9542,
+  schoolLng: 124.3821,
+  maxRadiusMeters: 250,
+  logoUrl: '',
+};
 
 const PRESET_STUDENT_AVATARS = [
   { label: 'Siswa Putra 1', url: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?auto=format&fit=crop&w=250&q=80' },
@@ -40,6 +61,7 @@ const PRESET_STUDENT_AVATARS = [
 export const StudentManagementTab: React.FC<StudentManagementTabProps> = ({
   students = [],
   classes = [],
+  config = DEFAULT_SCHOOL_CONFIG,
   onAddStudent,
   onUpdateStudent,
   onDeleteStudent,
@@ -49,8 +71,13 @@ export const StudentManagementTab: React.FC<StudentManagementTabProps> = ({
   const safeClasses = classes || [];
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedClassId, setSelectedClassId] = useState<string>('ALL');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'with_photo' | 'no_photo' | 'L' | 'P'>('ALL');
+  const [sortBy, setSortBy] = useState<'name_asc' | 'name_desc' | 'nisn_asc' | 'class_asc'>('name_asc');
+  const [viewMode, setViewMode] = useState<'grid' | 'table'>('grid');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingStudent, setEditingStudent] = useState<Student | null>(null);
+  const [isQrModalOpen, setIsQrModalOpen] = useState(false);
+  const [selectedQrStudent, setSelectedQrStudent] = useState<Student | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Form State
@@ -69,18 +96,38 @@ export const StudentManagementTab: React.FC<StudentManagementTabProps> = ({
 
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
-  const filteredStudents = safeStudents.filter((s) => {
-    const matchesSearch =
-      s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      s.nisn.includes(searchQuery) ||
-      (s.nik && s.nik.includes(searchQuery)) ||
-      s.className.toLowerCase().includes(searchQuery.toLowerCase());
+  // Filtering and Sorting
+  const filteredAndSortedStudents = safeStudents
+    .filter((s) => {
+      const matchesSearch =
+        s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        s.nisn.includes(searchQuery) ||
+        (s.nik && s.nik.includes(searchQuery)) ||
+        s.className.toLowerCase().includes(searchQuery.toLowerCase());
 
-    const matchesClass =
-      selectedClassId === 'ALL' || s.classId === selectedClassId;
+      const matchesClass =
+        selectedClassId === 'ALL' || s.classId === selectedClassId;
 
-    return matchesSearch && matchesClass;
-  });
+      let matchesStatus = true;
+      if (statusFilter === 'with_photo') {
+        matchesStatus = Boolean(s.avatar && s.avatar.length > 5);
+      } else if (statusFilter === 'no_photo') {
+        matchesStatus = !s.avatar || s.avatar.length <= 5;
+      } else if (statusFilter === 'L' || statusFilter === 'P') {
+        matchesStatus = s.gender === statusFilter;
+      }
+
+      return matchesSearch && matchesClass && matchesStatus;
+    })
+    .sort((a, b) => {
+      if (sortBy === 'name_asc') return a.name.localeCompare(b.name);
+      if (sortBy === 'name_desc') return b.name.localeCompare(a.name);
+      if (sortBy === 'nisn_asc') return a.nisn.localeCompare(b.nisn);
+      if (sortBy === 'class_asc') return a.className.localeCompare(b.className);
+      return 0;
+    });
+
+  const filteredStudents = filteredAndSortedStudents;
 
   const handleOpenAddModal = () => {
     setEditingStudent(null);
@@ -215,6 +262,17 @@ export const StudentManagementTab: React.FC<StudentManagementTabProps> = ({
 
         <div className="flex flex-wrap items-center gap-2.5">
           <button
+            onClick={() => {
+              setSelectedQrStudent(safeStudents[0] || null);
+              setIsQrModalOpen(true);
+            }}
+            className="px-3.5 py-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800 rounded-2xl text-xs font-bold flex items-center space-x-1.5 transition-colors cursor-pointer"
+          >
+            <QrCode className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+            <span>Generator QR Siswa</span>
+          </button>
+
+          <button
             onClick={handleExportCsv}
             className="px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-2xl text-xs font-bold flex items-center space-x-1.5 transition-colors cursor-pointer"
           >
@@ -240,48 +298,86 @@ export const StudentManagementTab: React.FC<StudentManagementTabProps> = ({
         </div>
       </div>
 
-      {/* Filters and Search */}
-      <div className="bg-white dark:bg-slate-900 p-4 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col md:flex-row gap-3 items-center justify-between">
-        {/* Search Bar */}
-        <div className="relative w-full md:w-80">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-          <input
-            type="text"
-            placeholder="Cari nama siswa, NISN, NIK, kelas..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl text-xs focus:bg-white dark:focus:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all font-medium text-slate-900 dark:text-white"
-          />
+      {/* Filters and Search Bar */}
+      <div className="bg-white dark:bg-slate-900 p-4 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-3">
+        <div className="flex flex-col lg:flex-row gap-3 items-center justify-between">
+          {/* Real-Time Search Bar */}
+          <div className="relative w-full lg:w-96">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              placeholder="Cari nama siswa, NISN, NIK, kelas..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-10 pr-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl text-xs focus:bg-white dark:focus:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all font-medium text-slate-900 dark:text-white"
+            />
+          </div>
+
+          {/* Dropdown Filters & Sorting Controls */}
+          <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto">
+            {/* Filter by Class Dropdown */}
+            <div className="flex items-center space-x-1.5">
+              <span className="text-[11px] font-bold text-slate-400">Kelas:</span>
+              <select
+                value={selectedClassId}
+                onChange={(e) => setSelectedClassId(e.target.value)}
+                className="px-3 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+              >
+                <option value="ALL">Semua Rombel ({students.length})</option>
+                {classes.map((cls) => (
+                  <option key={cls.id} value={cls.id}>
+                    {cls.name} ({students.filter((s) => s.classId === cls.id).length})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Filter by Status/Gender Dropdown */}
+            <div className="flex items-center space-x-1.5">
+              <span className="text-[11px] font-bold text-slate-400">Status:</span>
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value as any)}
+                className="px-3 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+              >
+                <option value="ALL">Semua Status</option>
+                <option value="with_photo">Foto Biometrik Ada</option>
+                <option value="no_photo">Foto Belum Ada</option>
+                <option value="L">Laki-Laki (L)</option>
+                <option value="P">Perempuan (P)</option>
+              </select>
+            </div>
+
+            {/* Sort Dropdown */}
+            <div className="flex items-center space-x-1.5">
+              <span className="text-[11px] font-bold text-slate-400">Urutkan:</span>
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as any)}
+                className="px-3 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+              >
+                <option value="name_asc">Nama (A - Z)</option>
+                <option value="name_desc">Nama (Z - A)</option>
+                <option value="nisn_asc">NISN Terurut</option>
+                <option value="class_asc">Rombel Kelas</option>
+              </select>
+            </div>
+          </div>
         </div>
 
-        {/* Class Filter Pills */}
-        <div className="flex items-center space-x-1.5 overflow-x-auto w-full md:w-auto pb-1 md:pb-0">
-          <button
-            onClick={() => setSelectedClassId('ALL')}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
-              selectedClassId === 'ALL'
-                ? 'bg-slate-900 dark:bg-indigo-600 text-white shadow-xs'
-                : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
-            }`}
-          >
-            Semua Kelas ({students.length})
-          </button>
-          {classes.map((cls) => {
-            const count = students.filter((s) => s.classId === cls.id).length;
-            return (
-              <button
-                key={cls.id}
-                onClick={() => setSelectedClassId(cls.id)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
-                  selectedClassId === cls.id
-                    ? 'bg-indigo-600 text-white shadow-xs'
-                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
-                }`}
-              >
-                {cls.name} ({count})
-              </button>
-            );
-          })}
+        {/* Filter Summary Count */}
+        <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 pt-2 border-t border-slate-100 dark:border-slate-800">
+          <span>
+            Menampilkan <strong>{filteredStudents.length}</strong> dari <strong>{students.length}</strong> siswa
+          </span>
+          {searchQuery && (
+            <button
+              onClick={() => setSearchQuery('')}
+              className="text-indigo-600 dark:text-indigo-400 font-bold hover:underline"
+            >
+              Reset Pencarian
+            </button>
+          )}
         </div>
       </div>
 
@@ -323,8 +419,18 @@ export const StudentManagementTab: React.FC<StudentManagementTabProps> = ({
                   </div>
                 </div>
 
-                {/* Edit & Delete Action Buttons */}
+                {/* Edit, QR & Delete Action Buttons */}
                 <div className="flex items-center space-x-1">
+                  <button
+                    onClick={() => {
+                      setSelectedQrStudent(student);
+                      setIsQrModalOpen(true);
+                    }}
+                    className="p-1.5 rounded-xl text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-slate-800 cursor-pointer transition-colors"
+                    title="Tampilkan QR Presensi Siswa"
+                  >
+                    <QrCode className="w-4 h-4" />
+                  </button>
                   <button
                     onClick={() => handleOpenEditModal(student)}
                     className="p-1.5 rounded-xl text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-slate-800 cursor-pointer transition-colors"
@@ -366,6 +472,20 @@ export const StudentManagementTab: React.FC<StudentManagementTabProps> = ({
                     <span className="font-mono text-indigo-600 dark:text-indigo-400 font-semibold">{student.parentPhone}</span>
                   </div>
                 )}
+              </div>
+
+              {/* Quick QR & Actions Row */}
+              <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    setSelectedQrStudent(student);
+                    setIsQrModalOpen(true);
+                  }}
+                  className="w-full py-1.5 px-3 bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/40 dark:hover:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 rounded-xl text-xs font-bold flex items-center justify-center space-x-1.5 border border-emerald-200 dark:border-emerald-800 transition-colors cursor-pointer"
+                >
+                  <QrCode className="w-3.5 h-3.5" />
+                  <span>Lihat QR Presensi</span>
+                </button>
               </div>
             </div>
 
@@ -647,6 +767,16 @@ export const StudentManagementTab: React.FC<StudentManagementTabProps> = ({
           </div>
         </div>
       )}
+
+      {/* Student QR Code Generator & Viewer Modal */}
+      <StudentQrCodeModal
+        isOpen={isQrModalOpen}
+        onClose={() => setIsQrModalOpen(false)}
+        selectedStudent={selectedQrStudent}
+        students={safeStudents}
+        config={config}
+        onSelectStudent={(s) => setSelectedQrStudent(s)}
+      />
     </div>
   );
 };

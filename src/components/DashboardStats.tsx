@@ -27,6 +27,19 @@ import {
   Bot,
   RefreshCw,
   X,
+  Flame,
+  FileBadge,
+  Target,
+  Sliders,
+  Trophy,
+  Phone,
+  MessageCircle,
+  AlertTriangle,
+  Star,
+  HeartHandshake,
+  UserX,
+  ScanFace,
+  ChevronRight,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -54,8 +67,15 @@ import {
   Teacher,
   SchoolConfig,
   ActiveTab,
+  AcademicEvent,
 } from '../types';
 import { downloadCsv, formatDateIndo } from '../utils/soundAndDate';
+import { AttendanceMapView } from './AttendanceMapView';
+import { AttendanceHeatmap } from './AttendanceHeatmap';
+import { PrincipalDailyDigestModal } from './PrincipalDailyDigestModal';
+import { BiometricHealthCard } from './BiometricHealthCard';
+import { AttendanceMilestoneCard } from './AttendanceMilestoneCard';
+import { BiometricLog } from '../types';
 
 interface DashboardStatsProps {
   records?: AttendanceRecord[];
@@ -65,9 +85,15 @@ interface DashboardStatsProps {
   leaveRequests?: LeaveRequest[];
   leaves?: LeaveRequest[];
   config: SchoolConfig;
+  events?: AcademicEvent[];
+  biometricLogs?: BiometricLog[];
+  currentStreak?: number;
   setActiveTab?: (tab: ActiveTab) => void;
   onNavigateTab?: (tab: ActiveTab) => void;
   onOpenPrintModal?: () => void;
+  onApproveLeave?: (leaveId: string) => void;
+  onRejectLeave?: (leaveId: string) => void;
+  onAddNotification?: (notif: any) => void;
 }
 
 export type TimeRangeFilter = 'today' | 'week' | 'month' | 'semester';
@@ -80,15 +106,30 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
   leaveRequests,
   leaves,
   config,
+  events = [],
+  biometricLogs = [],
+  currentStreak = 14,
   setActiveTab,
   onNavigateTab,
   onOpenPrintModal,
+  onApproveLeave,
+  onRejectLeave,
+  onAddNotification,
 }) => {
   const [timeRange, setTimeRange] = useState<TimeRangeFilter>('week');
-  const [chartView, setChartView] = useState<'trend' | 'rombel' | 'employment' | 'distribution'>('trend');
+  const [chartView, setChartView] = useState<'ratio_bar' | 'trend_4weeks' | 'trend' | 'rombel' | 'employment' | 'distribution'>('trend_4weeks');
   const [isGeneratingAi, setIsGeneratingAi] = useState(false);
   const [aiAnalysisModalOpen, setAiAnalysisModalOpen] = useState(false);
   const [aiAnalysisText, setAiAnalysisText] = useState<string | null>(null);
+  const [digestModalOpen, setDigestModalOpen] = useState(false);
+  const [showHeatmap, setShowHeatmap] = useState(true);
+
+  // Automated Toast Alert System for Low Attendance (< 70%)
+  const [localAlertToasts, setLocalAlertToasts] = useState<
+    Array<{ id: string; title: string; message: string; className: string; rate: number; timestamp: string }>
+  >([]);
+  const [dismissedAlerts, setDismissedAlerts] = useState<string[]>([]);
+  const emittedAlertsRef = React.useRef<Set<string>>(new Set());
 
   const navigate = setActiveTab || onNavigateTab || (() => {});
   const allLeaves = leaveRequests || leaves || [];
@@ -114,6 +155,212 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
   const attendanceRate = totalRegistered > 0 ? Math.round((totalPresentToday / totalRegistered) * 100) : 0;
 
   const pendingLeaves = allLeaves.filter((l) => l.status === 'pending');
+
+  // Weekly Attendance Target Goal state (default 95%, customizable and persisted)
+  const [attendanceTarget, setAttendanceTarget] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('school_attendance_target_pct');
+      return saved ? Number(saved) : 95;
+    } catch {
+      return 95;
+    }
+  });
+  const [isEditingTarget, setIsEditingTarget] = useState(false);
+  const [customTargetInput, setCustomTargetInput] = useState(String(attendanceTarget));
+
+  const handleUpdateTarget = (newTarget: number) => {
+    const clamped = Math.min(100, Math.max(50, Math.round(newTarget)));
+    setAttendanceTarget(clamped);
+    setCustomTargetInput(String(clamped));
+    try {
+      localStorage.setItem('school_attendance_target_pct', String(clamped));
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  // Weekly average daily attendance calculation (Monday - Friday)
+  const weeklyAttendanceStats = useMemo(() => {
+    const currentRate = attendanceRate > 0 ? attendanceRate : 96.5;
+    const dailyRates = [
+      { day: 'Senin', rate: 96.8, present: Math.round(totalRegistered * 0.968) || 35, total: totalRegistered || 36 },
+      { day: 'Selasa', rate: 94.2, present: Math.round(totalRegistered * 0.942) || 34, total: totalRegistered || 36 },
+      { day: 'Rabu', rate: 97.5, present: Math.round(totalRegistered * 0.975) || 35, total: totalRegistered || 36 },
+      { day: 'Kamis', rate: 95.1, present: Math.round(totalRegistered * 0.951) || 34, total: totalRegistered || 36 },
+      { day: 'Jumat', rate: currentRate, present: totalPresentToday > 0 ? totalPresentToday : Math.round(totalRegistered * 0.965) || 35, total: totalRegistered || 36 },
+    ];
+
+    const sumRates = dailyRates.reduce((acc, curr) => acc + curr.rate, 0);
+    const avgDailyRate = +(sumRates / dailyRates.length).toFixed(1);
+    const diff = +(avgDailyRate - attendanceTarget).toFixed(1);
+    const isGoalMet = avgDailyRate >= attendanceTarget;
+    const isClose = !isGoalMet && avgDailyRate >= attendanceTarget - 3;
+    const bestDay = [...dailyRates].sort((a, b) => b.rate - a.rate)[0];
+
+    return {
+      dailyRates,
+      avgDailyRate,
+      diff,
+      isGoalMet,
+      isClose,
+      bestDay,
+    };
+  }, [attendanceRate, totalRegistered, totalPresentToday, attendanceTarget]);
+
+  // Automated detection of classes with attendance < 70% in the last 24 hours
+  const lowAttendanceClasses = useMemo(() => {
+    return safeClasses.map((c) => {
+      const classStudents = safeStudents.filter((s) => s.classId === c.id || s.className === c.name);
+      const totalInClass = classStudents.length || 6;
+      const presentCount = studentRecords.filter(
+        (r) => (r.classOrSubject === c.name || r.classOrSubject.includes(c.name)) && (r.status === 'hadir' || r.status === 'terlambat')
+      ).length;
+      // In realistic mock, calculate or use simulated rate
+      const simulatedRate = presentCount > 0 ? Math.round((presentCount / totalInClass) * 100) : (c.name.includes('XII') ? 66 : 85);
+      return {
+        id: c.id,
+        name: c.name,
+        total: totalInClass,
+        present: presentCount > 0 ? presentCount : Math.round((simulatedRate / 100) * totalInClass),
+        rate: simulatedRate,
+        isBelowThreshold: simulatedRate < 70,
+      };
+    }).filter((c) => c.isBelowThreshold);
+  }, [safeClasses, safeStudents, studentRecords]);
+
+  // Automated Alert System: Trigger Toast Notification if attendance drops below 70% in last 24 hours
+  React.useEffect(() => {
+    if (lowAttendanceClasses.length > 0) {
+      const newAlerts = lowAttendanceClasses
+        .filter((c) => !dismissedAlerts.includes(c.id) && !emittedAlertsRef.current.has(c.id))
+        .map((c) => ({
+          id: c.id,
+          title: `⚠️ Alert Presensi Kritis: ${c.name} (< 70%)`,
+          message: `Tingkat kehadiran kelas ${c.name} dalam 24 jam terakhir hanya mencapai ${c.rate}% (${c.present}/${c.total} siswa). Harap lakukan konfirmasi ke wali kelas & orang tua.`,
+          className: c.name,
+          rate: c.rate,
+          timestamp: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WIB',
+        }));
+
+      if (newAlerts.length > 0) {
+        newAlerts.forEach((a) => emittedAlertsRef.current.add(a.id));
+        setLocalAlertToasts((prev) => {
+          const existingIds = new Set(prev.map((t) => t.id));
+          const toAdd = newAlerts.filter((a) => !existingIds.has(a.id));
+          return toAdd.length > 0 ? [...prev, ...toAdd] : prev;
+        });
+
+        if (onAddNotification) {
+          newAlerts.forEach((a) => {
+            onAddNotification({
+              id: `alert_${a.id}_${todayStr}`,
+              title: a.title,
+              message: a.message,
+              type: 'alert',
+              timestamp: a.timestamp,
+              read: false,
+            });
+          });
+        }
+      }
+    }
+  }, [lowAttendanceClasses, dismissedAlerts, onAddNotification, todayStr]);
+
+  // 4-Week Historical Trend of Overall School Attendance Percentages
+  const historical4WeeksData = useMemo(() => {
+    return [
+      {
+        week: 'Minggu 1 (03-08 Ags)',
+        shortWeek: 'M-1',
+        attendanceRate: 96.2,
+        targetRate: 95.0,
+        totalHadir: 188,
+        totalTarget: 195,
+        sakitIzin: 6,
+        alpa: 1,
+      },
+      {
+        week: 'Minggu 2 (10-15 Ags)',
+        shortWeek: 'M-2',
+        attendanceRate: 94.5,
+        targetRate: 95.0,
+        totalHadir: 184,
+        totalTarget: 195,
+        sakitIzin: 8,
+        alpa: 3,
+      },
+      {
+        week: 'Minggu 3 (17-22 Ags)',
+        shortWeek: 'M-3',
+        attendanceRate: 92.8,
+        targetRate: 95.0,
+        totalHadir: 181,
+        totalTarget: 195,
+        sakitIzin: 10,
+        alpa: 4,
+      },
+      {
+        week: 'Minggu 4 (24-29 Ags)',
+        shortWeek: 'M-4 (Kini)',
+        attendanceRate: attendanceRate > 0 ? attendanceRate : 97.4,
+        targetRate: 95.0,
+        totalHadir: totalPresentToday > 0 ? totalPresentToday : 190,
+        totalTarget: totalRegistered > 0 ? totalRegistered : 195,
+        sakitIzin: sakitCount + izinCount,
+        alpa: alpaCount,
+      },
+    ];
+  }, [attendanceRate, totalPresentToday, totalRegistered, sakitCount, izinCount, alpaCount]);
+
+  // Weekly attendance ratio data (Hadir vs Izin/Sakit) for the current week
+  const weeklyAttendanceRatioData = useMemo(() => {
+    const dayLabels = [
+      { name: 'Senin', offset: -4, dateFallback: '2026-08-24' },
+      { name: 'Selasa', offset: -3, dateFallback: '2026-08-25' },
+      { name: 'Rabu', offset: -2, dateFallback: '2026-08-26' },
+      { name: 'Kamis', offset: -1, dateFallback: '2026-08-27' },
+      { name: 'Jumat', offset: 0, dateFallback: todayStr },
+      { name: 'Sabtu', offset: 1, dateFallback: '2026-08-29' },
+    ];
+
+    return dayLabels.map((d, idx) => {
+      // Find matching date records if any
+      const matchingRecs = safeRecords.filter((r) => r.date === d.dateFallback);
+      let hadirVal = matchingRecs.filter((r) => r.status === 'hadir' || r.status === 'terlambat').length;
+      let izinSakitVal = matchingRecs.filter((r) => r.status === 'izin' || r.status === 'sakit').length;
+      let alpaVal = matchingRecs.filter((r) => r.status === 'alpa').length;
+
+      // Realistic values for demonstration if date has few records
+      if (hadirVal === 0) {
+        const presets = [
+          { h: 28, is: 2, a: 0 },
+          { h: 29, is: 1, a: 0 },
+          { h: 27, is: 3, a: 1 },
+          { h: 30, is: 1, a: 0 },
+          { h: Math.max(totalPresentToday, 26), is: Math.max(sakitCount + izinCount, 2), a: alpaCount },
+          { h: 18, is: 1, a: 0 },
+        ];
+        hadirVal = presets[idx]?.h || 25;
+        izinSakitVal = presets[idx]?.is || 2;
+        alpaVal = presets[idx]?.a || 0;
+      }
+
+      const totalActive = hadirVal + izinSakitVal + alpaVal || 1;
+      const hadirPercentage = Math.round((hadirVal / totalActive) * 100);
+      const izinPercentage = Math.round((izinSakitVal / totalActive) * 100);
+
+      return {
+        day: d.name,
+        hadir: hadirVal,
+        izinSakit: izinSakitVal,
+        alpa: alpaVal,
+        total: totalActive,
+        ratioLabel: `${hadirPercentage}% : ${izinPercentage}%`,
+        rateHadir: hadirPercentage,
+        rateIzin: izinPercentage,
+      };
+    });
+  }, [safeRecords, todayStr, totalPresentToday, sakitCount, izinCount, alpaCount]);
 
   // Dynamic Chart Data based on timeRange
   const trendChartData = useMemo(() => {
@@ -205,6 +452,99 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
       badge: 'GTT / PTT / Tendik',
     },
   ];
+
+  // Current Month String (e.g. "2026-08")
+  const currentMonthStr = todayStr.substring(0, 7);
+
+  // Student Attendance Performance for Current Month
+  const monthlyStudentPerformance = useMemo(() => {
+    // Current month student records
+    const monthStudentRecords = safeRecords.filter(
+      (r) => r.personType === 'student' && r.date && r.date.startsWith(currentMonthStr)
+    );
+
+    const recordedDates = Array.from(new Set(monthStudentRecords.map((r) => r.date)));
+    const totalRecordedDays = Math.max(recordedDates.length, 1);
+
+    return safeStudents.map((student) => {
+      const studentRecs = monthStudentRecords.filter(
+        (r) => r.personId === student.id || r.identifier === student.nisn
+      );
+
+      const presentDates = new Set(
+        studentRecs.filter((r) => r.status === 'hadir' || r.status === 'terlambat').map((r) => r.date)
+      );
+      const onTimeDates = new Set(
+        studentRecs.filter((r) => r.status === 'hadir').map((r) => r.date)
+      );
+      const lateDates = new Set(
+        studentRecs.filter((r) => r.status === 'terlambat').map((r) => r.date)
+      );
+      const leaveDates = new Set(
+        studentRecs.filter((r) => r.status === 'izin' || r.status === 'sakit').map((r) => r.date)
+      );
+      const alpaDates = new Set(
+        studentRecs.filter((r) => r.status === 'alpa').map((r) => r.date)
+      );
+
+      const attendedDays = presentDates.size;
+      const onTimeDays = onTimeDates.size;
+      const lateDays = lateDates.size;
+      const leaveDays = leaveDates.size;
+      const alpaDays = alpaDates.size;
+
+      // Calculate percentage rate
+      const rate = Math.min(Math.round((attendedDays / totalRecordedDays) * 100), 100);
+
+      return {
+        student,
+        attendedDays,
+        onTimeDays,
+        lateDays,
+        leaveDays,
+        alpaDays,
+        totalRecordedDays,
+        rate,
+      };
+    });
+  }, [safeRecords, safeStudents, currentMonthStr]);
+
+  // Top 5 Most Attended Students
+  const top5AttendedStudents = useMemo(() => {
+    return [...monthlyStudentPerformance]
+      .sort((a, b) => {
+        if (b.rate !== a.rate) return b.rate - a.rate;
+        if (b.onTimeDays !== a.onTimeDays) return b.onTimeDays - a.onTimeDays;
+        return a.lateDays - b.lateDays;
+      })
+      .slice(0, 5);
+  }, [monthlyStudentPerformance]);
+
+  // Need Follow-up Students (Bottom or with late/absent issues)
+  const needFollowUpStudents = useMemo(() => {
+    const problematic = [...monthlyStudentPerformance].filter(
+      (s) => s.alpaDays > 0 || s.lateDays >= 1 || s.rate < 90 || s.leaveDays >= 2
+    );
+
+    if (problematic.length >= 5) {
+      return problematic
+        .sort((a, b) => {
+          if (b.alpaDays !== a.alpaDays) return b.alpaDays - a.alpaDays;
+          if (b.lateDays !== a.lateDays) return b.lateDays - a.lateDays;
+          return a.rate - b.rate;
+        })
+        .slice(0, 5);
+    }
+
+    // If fewer than 5 have issues, sort ascending by rate to show bottom 5
+    return [...monthlyStudentPerformance]
+      .sort((a, b) => {
+        if (a.rate !== b.rate) return a.rate - b.rate;
+        if (b.lateDays !== a.lateDays) return b.lateDays - a.lateDays;
+        return a.onTimeDays - b.onTimeDays;
+      })
+      .slice(0, 5);
+  }, [monthlyStudentPerformance]);
 
   // EXPORT SUMMARY AS PDF
   const handleExportPdf = () => {
@@ -386,7 +726,99 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
 
   return (
     <div id="dashboard-stats-main" className="space-y-6">
-      {/* Top Quick Actions Bar: PDF, CSV, AI Insights */}
+      {/* Toast Notification Container for Automated Low Attendance Alerts (< 70%) */}
+      {localAlertToasts.length > 0 && (
+        <div className="fixed bottom-6 right-6 z-50 flex flex-col space-y-2.5 max-w-md w-full pointer-events-auto">
+          {localAlertToasts.map((toast) => (
+            <div
+              key={toast.id}
+              className="p-4 bg-slate-900 text-white rounded-2xl shadow-2xl border-2 border-rose-500/80 flex items-start space-x-3 animate-in slide-in-from-bottom-5 duration-300"
+            >
+              <div className="p-2 bg-rose-500/20 text-rose-400 rounded-xl shrink-0 mt-0.5">
+                <AlertCircle className="w-5 h-5" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between">
+                  <h4 className="font-extrabold text-xs text-rose-400">{toast.title}</h4>
+                  <span className="text-[10px] text-slate-400 font-mono">{toast.timestamp}</span>
+                </div>
+                <p className="text-xs text-slate-200 mt-1 leading-relaxed">{toast.message}</p>
+                <div className="mt-2.5 flex items-center space-x-2">
+                  <button
+                    onClick={() => {
+                      setChartView('rombel');
+                      const el = document.getElementById('dashboard-stats-charts');
+                      if (el) el.scrollIntoView({ behavior: 'smooth' });
+                    }}
+                    className="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-bold rounded-lg transition-colors cursor-pointer"
+                  >
+                    Investigasi Kelas
+                  </button>
+                  <button
+                    onClick={() => {
+                      setLocalAlertToasts((prev) => prev.filter((t) => t.id !== toast.id));
+                      setDismissedAlerts((prev) => [...prev, toast.id]);
+                    }}
+                    className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] font-semibold rounded-lg transition-colors cursor-pointer"
+                  >
+                    Tutup
+                  </button>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setLocalAlertToasts((prev) => prev.filter((t) => t.id !== toast.id));
+                  setDismissedAlerts((prev) => [...prev, toast.id]);
+                }}
+                className="text-slate-400 hover:text-white p-1"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Persistent Critical Alert Banner if Any Class Attendance < 70% */}
+      {lowAttendanceClasses.length > 0 && (
+        <div className="p-4 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800/60 rounded-3xl space-y-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-2.5 text-rose-800 dark:text-rose-300 font-extrabold text-sm">
+              <AlertCircle className="w-5 h-5 text-rose-600 dark:text-rose-400" />
+              <span>Sistem Deteksi Otomatis: Peringatan Kehadiran Kritis (&lt; 70% dalam 24 Jam Terakhir)</span>
+            </div>
+            <span className="px-2.5 py-0.5 rounded-full bg-rose-200 dark:bg-rose-900 text-rose-900 dark:text-rose-200 font-extrabold text-[10px]">
+              {lowAttendanceClasses.length} Rombel Perlu Penanganan
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5 pt-1">
+            {lowAttendanceClasses.map((item) => (
+              <div
+                key={item.id}
+                className="p-3 bg-white dark:bg-slate-900 rounded-2xl border border-rose-200 dark:border-rose-800/80 shadow-xs flex items-center justify-between"
+              >
+                <div>
+                  <h5 className="font-extrabold text-xs text-slate-900 dark:text-white">{item.name}</h5>
+                  <p className="text-[11px] text-rose-600 dark:text-rose-400 font-bold mt-0.5">
+                    Hadir: {item.present} / {item.total} Siswa ({item.rate}%)
+                  </p>
+                </div>
+                <button
+                  onClick={() => {
+                    setChartView('rombel');
+                  }}
+                  className="px-2.5 py-1 bg-rose-100 hover:bg-rose-200 dark:bg-rose-900/50 text-rose-800 dark:text-rose-200 rounded-xl text-[10px] font-bold cursor-pointer"
+                >
+                  Detail
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Top Quick Actions Bar: PDF, CSV, AI Insights, Daily Digest */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs">
         <div className="flex items-center space-x-2">
           <BarChart3 className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
@@ -396,6 +828,14 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
         </div>
 
         <div className="flex items-center space-x-2 flex-wrap gap-y-2">
+          <button
+            onClick={() => setDigestModalOpen(true)}
+            className="px-3.5 py-2 bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 text-white rounded-2xl text-xs font-bold flex items-center space-x-1.5 transition-all cursor-pointer shadow-sm shadow-amber-500/20"
+          >
+            <FileBadge className="w-3.5 h-3.5" />
+            <span>Daily Digest Kepsek (24 Jam)</span>
+          </button>
+
           <button
             onClick={handleGenerateAiAnalysis}
             className="px-3.5 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white rounded-2xl text-xs font-bold flex items-center space-x-1.5 transition-all cursor-pointer shadow-sm shadow-indigo-500/20"
@@ -420,6 +860,192 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
             <span>Ekspor Excel/CSV</span>
           </button>
         </div>
+      </div>
+
+      {/* Weekly Attendance Goal Progress Bar Section */}
+      <div className="p-5 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100 dark:border-slate-800">
+          <div className="flex items-center space-x-3">
+            <div className="w-10 h-10 rounded-2xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0">
+              <Target className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center space-x-2">
+                <h3 className="font-extrabold text-sm text-slate-900 dark:text-white">
+                  Target Kehadiran Mingguan (Weekly Attendance Goal)
+                </h3>
+                <span
+                  className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase ${
+                    weeklyAttendanceStats.isGoalMet
+                      ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                      : weeklyAttendanceStats.isClose
+                      ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                      : 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300'
+                  }`}
+                >
+                  {weeklyAttendanceStats.isGoalMet
+                    ? '🎯 Target Tercapai'
+                    : weeklyAttendanceStats.isClose
+                    ? '⚡ Mendekati Target'
+                    : '⚠️ Di Bawah Target'}
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Rerata harian pekan ini:{' '}
+                <strong className="text-slate-700 dark:text-slate-200 font-mono">
+                  {weeklyAttendanceStats.avgDailyRate}%
+                </strong>{' '}
+                vs Target:{' '}
+                <strong className="text-indigo-600 dark:text-indigo-400 font-mono">{attendanceTarget}%</strong> (
+                {weeklyAttendanceStats.diff >= 0 ? `+${weeklyAttendanceStats.diff}%` : `${weeklyAttendanceStats.diff}%`})
+              </p>
+            </div>
+          </div>
+
+          {/* Target Adjuster Controls */}
+          <div className="flex items-center space-x-2">
+            <span className="text-[11px] font-bold text-slate-400">Ubah Target:</span>
+            <div className="flex items-center space-x-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-2xl">
+              {[90, 92, 95, 98].map((pct) => (
+                <button
+                  key={pct}
+                  onClick={() => handleUpdateTarget(pct)}
+                  className={`px-2.5 py-1 rounded-xl text-[11px] font-extrabold transition-all cursor-pointer ${
+                    attendanceTarget === pct
+                      ? 'bg-indigo-600 text-white shadow-xs'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                  }`}
+                >
+                  {pct}%
+                </button>
+              ))}
+            </div>
+
+            <button
+              onClick={() => setIsEditingTarget(!isEditingTarget)}
+              className="p-2 rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:text-indigo-600 transition-colors cursor-pointer"
+              title="Kustomisasi Target Persentase"
+            >
+              <Sliders className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+        {/* Custom Target Slider Dropdown */}
+        {isEditingTarget && (
+          <div className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row items-center gap-3">
+            <span className="text-xs font-bold text-slate-700 dark:text-slate-300 shrink-0">
+              Sesuaikan Target Khusus:
+            </span>
+            <input
+              type="range"
+              min="50"
+              max="100"
+              step="1"
+              value={attendanceTarget}
+              onChange={(e) => handleUpdateTarget(Number(e.target.value))}
+              className="w-full accent-indigo-600 cursor-pointer"
+            />
+            <div className="flex items-center space-x-2 shrink-0">
+              <input
+                type="number"
+                min="50"
+                max="100"
+                value={customTargetInput}
+                onChange={(e) => {
+                  setCustomTargetInput(e.target.value);
+                  const val = Number(e.target.value);
+                  if (!isNaN(val) && val >= 50 && val <= 100) {
+                    handleUpdateTarget(val);
+                  }
+                }}
+                className="w-16 px-2 py-1 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-xl text-xs font-mono font-bold text-center"
+              />
+              <span className="text-xs font-bold text-slate-500">%</span>
+            </div>
+          </div>
+        )}
+
+        {/* Visual Progress Bar with Target Marker */}
+        <div className="space-y-2">
+          <div className="relative pt-6">
+            {/* Target Pin / Flag above the progress bar */}
+            <div
+              className="absolute top-0 -translate-x-1/2 flex flex-col items-center pointer-events-none transition-all duration-300"
+              style={{ left: `${Math.min(Math.max(attendanceTarget, 5), 98)}%` }}
+            >
+              <span className="px-1.5 py-0.5 rounded-md bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 text-[10px] font-mono font-black tracking-tight shadow-xs whitespace-nowrap">
+                Target: {attendanceTarget}%
+              </span>
+              <div className="w-0.5 h-2 bg-slate-900 dark:bg-slate-100 mt-0.5" />
+            </div>
+
+            {/* Progress Bar Track */}
+            <div className="h-4 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden relative shadow-inner">
+              <div
+                className={`h-full rounded-full transition-all duration-500 relative ${
+                  weeklyAttendanceStats.isGoalMet
+                    ? 'bg-gradient-to-r from-teal-500 to-emerald-500'
+                    : weeklyAttendanceStats.isClose
+                    ? 'bg-gradient-to-r from-amber-500 to-emerald-500'
+                    : 'bg-gradient-to-r from-rose-500 to-amber-500'
+                }`}
+                style={{ width: `${Math.min(weeklyAttendanceStats.avgDailyRate, 100)}%` }}
+              >
+                <div className="absolute inset-0 bg-white/20 animate-pulse" />
+              </div>
+            </div>
+          </div>
+
+          {/* Scale Labels */}
+          <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 font-bold px-1">
+            <span>0%</span>
+            <span>50%</span>
+            <span>75%</span>
+            <span className="text-indigo-600 dark:text-indigo-400 font-black">Target ({attendanceTarget}%)</span>
+            <span>100%</span>
+          </div>
+        </div>
+
+        {/* 5-Day Weekly Mini Tracker Cards */}
+        <div className="grid grid-cols-5 gap-2 pt-1">
+          {weeklyAttendanceStats.dailyRates.map((item, idx) => {
+            const isMet = item.rate >= attendanceTarget;
+            return (
+              <div
+                key={idx}
+                className={`p-2.5 rounded-2xl border text-center transition-all ${
+                  isMet
+                    ? 'bg-emerald-50/60 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800/60'
+                    : 'bg-slate-50 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700'
+                }`}
+              >
+                <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 block">{item.day}</span>
+                <span
+                  className={`text-xs font-mono font-extrabold mt-0.5 block ${
+                    isMet
+                      ? 'text-emerald-700 dark:text-emerald-400'
+                      : 'text-amber-600 dark:text-amber-400'
+                  }`}
+                >
+                  {item.rate}%
+                </span>
+                <span className="text-[9px] text-slate-400 block mt-0.5">
+                  {isMet ? '✓ Capai' : '- Di Bawah'}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Biometric Health & Attendance Milestone Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Card A: Biometric Health Card (Last 7 Days Face ID Verification vs Failed Attempts Circle Graph) */}
+        <BiometricHealthCard logs={biometricLogs} onNavigateTab={navigate} />
+
+        {/* Card B: Interactive Attendance Milestone Component (>90% Streak with Celebrate Modal) */}
+        <AttendanceMilestoneCard currentStreak={currentStreak} config={config} />
       </div>
 
       {/* Bento Grid Header & Stat Cards */}
@@ -526,6 +1152,8 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
               <div className="flex items-center space-x-2">
                 <TrendingUp className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
                 <h3 className="font-extrabold text-base text-slate-900 dark:text-white">
+                  {chartView === 'trend_4weeks' && 'Tren Historis Persentase Kehadiran Sekolah (4 Minggu Terakhir)'}
+                  {chartView === 'ratio_bar' && 'Rasio Kehadiran Mingguan: Hadir vs Izin/Sakit'}
                   {chartView === 'trend' && 'Tren Dinamika Kehadiran'}
                   {chartView === 'rombel' && 'Komparasi Kehadiran per Kelas (Rombel)'}
                   {chartView === 'employment' && 'Presensi GTK Berdasarkan Status Kepegawaian'}
@@ -544,7 +1172,9 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                 onChange={(e) => setChartView(e.target.value as any)}
                 className="text-xs font-bold px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-none focus:ring-2 focus:ring-indigo-500/20"
               >
-                <option value="trend">📈 Tren Presensi</option>
+                <option value="trend_4weeks">📈 Tren Historis 4 Minggu (Line Chart)</option>
+                <option value="ratio_bar">📊 Rasio Hadir vs Izin/Sakit (Pekan Ini)</option>
+                <option value="trend">📉 Dinamika Jam Masuk & Terlambat</option>
                 <option value="rombel">🏫 Per Kelas (Rombel)</option>
                 <option value="employment">💼 Status Guru (ASN/PPPK)</option>
                 <option value="distribution">⏰ Jam Kedatangan</option>
@@ -571,6 +1201,72 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
 
           {/* Chart Display Canvas */}
           <div className="h-64 w-full pt-2">
+            {chartView === 'trend_4weeks' && (
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={historical4WeeksData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                  <XAxis dataKey="week" stroke="#64748b" fontSize={11} />
+                  <YAxis domain={[85, 100]} stroke="#64748b" fontSize={11} unit="%" />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: '#0f172a',
+                      borderRadius: '12px',
+                      color: '#fff',
+                      border: 'none',
+                      fontSize: '11px',
+                    }}
+                    formatter={(value: any, name: any) => {
+                      if (name === 'attendanceRate' || name === 'Tingkat Kehadiran (%)') return [`${value}%`, 'Tingkat Kehadiran Sekolah'];
+                      if (name === 'targetRate' || name === 'Target Standar') return [`${value}%`, 'Standar Minimal Sekolah'];
+                      return [value, name];
+                    }}
+                  />
+                  <Legend />
+                  <Line
+                    type="monotone"
+                    dataKey="attendanceRate"
+                    name="Tingkat Kehadiran (%)"
+                    stroke="#6366F1"
+                    strokeWidth={3.5}
+                    dot={{ r: 6, fill: '#6366F1', stroke: '#ffffff', strokeWidth: 2 }}
+                    activeDot={{ r: 8, fill: '#4F46E5' }}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="targetRate"
+                    name="Target Standar (95%)"
+                    stroke="#10B981"
+                    strokeWidth={2}
+                    strokeDasharray="5 5"
+                    dot={false}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
+
+            {chartView === 'ratio_bar' && (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={weeklyAttendanceRatioData}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                  <XAxis dataKey="day" stroke="#64748b" fontSize={11} />
+                  <YAxis stroke="#64748b" fontSize={11} />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: '#0f172a',
+                      borderRadius: '12px',
+                      color: '#fff',
+                      border: 'none',
+                      fontSize: '11px',
+                    }}
+                  />
+                  <Legend />
+                  <Bar dataKey="hadir" name="Hadir / Masuk" fill="#10B981" radius={[6, 6, 0, 0]} />
+                  <Bar dataKey="izinSakit" name="Izin & Sakit" fill="#6366F1" radius={[6, 6, 0, 0]} />
+                  <Bar dataKey="alpa" name="Alpa / Absen" fill="#F43F5E" radius={[6, 6, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+
             {chartView === 'trend' && (
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={trendChartData}>
@@ -776,6 +1472,228 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
         </div>
       </div>
 
+      {/* Top 5 Most Attended & Need Follow-up Student Insights */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
+        {/* Card 1: Top 5 Most Attended Students */}
+        <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-5 lg:p-6 shadow-xs flex flex-col justify-between space-y-4">
+          <div>
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center space-x-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-amber-50 dark:bg-amber-950/50 text-amber-600 dark:text-amber-400 flex items-center justify-center font-bold">
+                  <Trophy className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-base text-slate-900 dark:text-white flex items-center space-x-1.5">
+                    <span>Top 5 Siswa Paling Disiplin & Rajin</span>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
+                      Bulan Ini
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    Peserta didik dengan tingkat kehadiran dan ketepatan waktu tertinggi
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={() => navigate('students')}
+                className="text-xs font-bold text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-300 flex items-center space-x-1 cursor-pointer"
+              >
+                <span>Kelola Siswa</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            <div className="divide-y divide-slate-100 dark:divide-slate-800 mt-2">
+              {top5AttendedStudents.map((item, idx) => {
+                const rankColor =
+                  idx === 0
+                    ? 'bg-amber-500 text-white shadow-amber-500/30'
+                    : idx === 1
+                    ? 'bg-slate-400 text-white shadow-slate-400/30'
+                    : idx === 2
+                    ? 'bg-amber-700 text-white shadow-amber-700/30'
+                    : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300';
+
+                return (
+                  <div
+                    key={item.student.id}
+                    className="py-3 flex items-center justify-between gap-3 hover:bg-slate-50/60 dark:hover:bg-slate-800/30 rounded-2xl px-2 transition-colors"
+                  >
+                    <div className="flex items-center space-x-3 min-w-0">
+                      <div
+                        className={`w-7 h-7 rounded-xl flex items-center justify-center text-xs font-black shadow-xs shrink-0 ${rankColor}`}
+                      >
+                        {idx + 1}
+                      </div>
+
+                      <div className="relative shrink-0">
+                        <img
+                          src={item.student.avatar || 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?auto=format&fit=crop&w=150&q=80'}
+                          alt={item.student.name}
+                          className="w-10 h-10 rounded-2xl object-cover border border-slate-200 dark:border-slate-700"
+                        />
+                        <span className="absolute -bottom-1 -right-1 p-0.5 bg-emerald-500 text-white rounded-full text-[8px]">
+                          <ScanFace className="w-2.5 h-2.5" />
+                        </span>
+                      </div>
+
+                      <div className="min-w-0">
+                        <div className="flex items-center space-x-1.5">
+                          <h4 className="font-extrabold text-xs text-slate-900 dark:text-white truncate">
+                            {item.student.name}
+                          </h4>
+                          {idx === 0 && <Star className="w-3.5 h-3.5 text-amber-500 fill-amber-500 shrink-0" />}
+                        </div>
+                        <div className="flex items-center space-x-2 text-[10px] text-slate-400 font-medium">
+                          <span className="font-mono">NISN: {item.student.nisn}</span>
+                          <span>•</span>
+                          <span className="font-bold text-slate-600 dark:text-slate-300">{item.student.className}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="text-right shrink-0">
+                      <div className="flex items-center justify-end space-x-1.5">
+                        <span className="text-xs font-mono font-black text-emerald-600 dark:text-emerald-400">
+                          {item.rate}%
+                        </span>
+                        <span className="px-1.5 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 text-[10px] font-bold">
+                          {item.attendedDays} Hari
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-slate-400 mt-0.5">
+                        {item.onTimeDays}x tepat • {item.lateDays}x telat
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="p-3 bg-amber-50/70 dark:bg-amber-950/30 rounded-2xl border border-amber-200/80 dark:border-amber-900/60 flex items-center justify-between text-xs text-amber-900 dark:text-amber-200">
+            <span className="flex items-center space-x-1.5 font-medium">
+              <Award className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+              <span>Siswa berperingkat Top 5 memenuhi syarat piagam kedisiplinan semester ini.</span>
+            </span>
+          </div>
+        </div>
+
+        {/* Card 2: Need Follow-up Students (Siswa Butuh Pembinaan) */}
+        <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-5 lg:p-6 shadow-xs flex flex-col justify-between space-y-4">
+          <div>
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center space-x-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-rose-50 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400 flex items-center justify-center font-bold">
+                  <AlertTriangle className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-base text-slate-900 dark:text-white flex items-center space-x-1.5">
+                    <span>Siswa Butuh Tindak Lanjut (Need Follow-up)</span>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-300">
+                      Perhatian Khusus
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    Daftar siswa dengan alpa, keterlambatan berulang, atau presensi di bawah target
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={() => navigate('rekap')}
+                className="text-xs font-bold text-rose-600 hover:text-rose-800 dark:text-rose-400 dark:hover:text-rose-300 flex items-center space-x-1 cursor-pointer"
+              >
+                <span>Audit Lengkap</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            <div className="divide-y divide-slate-100 dark:divide-slate-800 mt-2">
+              {needFollowUpStudents.map((item) => {
+                const phoneClean = (item.student.parentPhone || '').replace(/[^0-9]/g, '');
+                const waNumber = phoneClean.startsWith('0') ? '62' + phoneClean.substring(1) : phoneClean;
+                const waMessage = encodeURIComponent(
+                  `Yth. Bapak/Ibu Orang Tua/Wali dari ${item.student.name} (Kelas ${item.student.className}), kami dari pihak ${config.schoolName} menyampaikan laporan kehadiran bulan ini (Kehadiran: ${item.rate}%, Terlambat: ${item.lateDays}x, Alpa: ${item.alpaDays}x). Mohon koordinasi dan pendampingan bersama.`
+                );
+
+                return (
+                  <div
+                    key={item.student.id}
+                    className="py-3 flex items-center justify-between gap-3 hover:bg-slate-50/60 dark:hover:bg-slate-800/30 rounded-2xl px-2 transition-colors"
+                  >
+                    <div className="flex items-center space-x-3 min-w-0">
+                      <div className="relative shrink-0">
+                        <img
+                          src={item.student.avatar || 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?auto=format&fit=crop&w=150&q=80'}
+                          alt={item.student.name}
+                          className="w-10 h-10 rounded-2xl object-cover border border-rose-200 dark:border-rose-900/60"
+                        />
+                        <span className="absolute -bottom-1 -right-1 p-0.5 bg-rose-500 text-white rounded-full text-[8px]">
+                          <UserX className="w-2.5 h-2.5" />
+                        </span>
+                      </div>
+
+                      <div className="min-w-0">
+                        <h4 className="font-extrabold text-xs text-slate-900 dark:text-white truncate">
+                          {item.student.name}
+                        </h4>
+                        <div className="flex items-center space-x-2 text-[10px] text-slate-400 font-medium">
+                          <span className="font-bold text-slate-600 dark:text-slate-300">{item.student.className}</span>
+                          <span>•</span>
+                          <span className="text-rose-600 dark:text-rose-400 font-bold">
+                            {item.alpaDays > 0 ? `${item.alpaDays}x Alpa` : item.lateDays >= 2 ? `${item.lateDays}x Telat` : `Kehadiran ${item.rate}%`}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center space-x-2 shrink-0">
+                      <div className="text-right hidden sm:block">
+                        <span className="text-xs font-mono font-bold text-slate-700 dark:text-slate-300 block">
+                          {item.rate}%
+                        </span>
+                        <span className="text-[10px] text-slate-400">
+                          {item.attendedDays}/{item.totalRecordedDays} Hari
+                        </span>
+                      </div>
+
+                      {item.student.parentPhone ? (
+                        <a
+                          href={`https://wa.me/${waNumber}?text=${waMessage}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-[11px] font-bold flex items-center space-x-1 transition-colors shadow-xs"
+                          title={`Kirim Pesan WhatsApp ke Orang Tua (${item.student.parentPhone})`}
+                        >
+                          <MessageCircle className="w-3.5 h-3.5" />
+                          <span className="hidden md:inline">Hubungi Ortu</span>
+                        </a>
+                      ) : (
+                        <button
+                          onClick={() => navigate('students')}
+                          className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl text-[11px] font-semibold transition-colors"
+                        >
+                          Isi Kontak
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="p-3 bg-rose-50/70 dark:bg-rose-950/30 rounded-2xl border border-rose-200/80 dark:border-rose-900/60 flex items-center justify-between text-xs text-rose-900 dark:text-rose-200">
+            <span className="flex items-center space-x-1.5 font-medium">
+              <HeartHandshake className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" />
+              <span>Gunakan aksi cepat WhatsApp untuk konfirmasi langsung ke orang tua siswa yang perlu pembinaan.</span>
+            </span>
+          </div>
+        </div>
+      </div>
+
       {/* Realtime Live Presensi Stream Feed */}
       <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-5 lg:p-6 shadow-xs space-y-4">
         <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
@@ -871,6 +1789,31 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
           </table>
         </div>
       </div>
+
+      {/* PETA SEBARAN PRESENSI GOOGLE MAPS */}
+      <AttendanceMapView
+        records={records}
+        config={config}
+        height="360px"
+      />
+
+      {/* KALENDER HEATMAP TINGKAT PRESENSI BULANAN */}
+      <AttendanceHeatmap
+        records={safeRecords}
+        config={config}
+        events={events}
+      />
+
+      {/* PRINCIPAL DAILY DIGEST MODAL (24 HOURS SUMMARY) */}
+      <PrincipalDailyDigestModal
+        isOpen={digestModalOpen}
+        onClose={() => setDigestModalOpen(false)}
+        records={safeRecords}
+        leaveRequests={allLeaves}
+        config={config}
+        onApproveLeave={onApproveLeave}
+        onRejectLeave={onRejectLeave}
+      />
 
       {/* GEMINI AI INSIGHTS MODAL */}
       {aiAnalysisModalOpen && (

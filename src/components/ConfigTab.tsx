@@ -38,6 +38,7 @@ import {
   GtkServiceRequest,
   AcademicEvent,
   ActivityLog,
+  BiometricLog,
 } from '../types';
 import { playBeepSound } from '../utils/soundAndDate';
 import {
@@ -45,6 +46,8 @@ import {
   fetchFirestoreBackups,
   restoreBackupFromFirestore,
 } from '../lib/firebase';
+import { GoogleMapsGeofence } from './GoogleMapsGeofence';
+import { LocateFixed, Map as MapIcon } from 'lucide-react';
 
 interface ConfigTabProps {
   config: SchoolConfig;
@@ -56,6 +59,7 @@ interface ConfigTabProps {
   gtkServices?: GtkServiceRequest[];
   events?: AcademicEvent[];
   activityLogs?: ActivityLog[];
+  biometricLogs?: BiometricLog[];
   onSaveConfig: (newConfig: SchoolConfig) => void;
   onResetToDefault: () => void;
   onRestoreBackup?: (backupData: AppBackupData) => void;
@@ -102,6 +106,7 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
   gtkServices = [],
   events = [],
   activityLogs = [],
+  biometricLogs = [],
   onSaveConfig,
   onResetToDefault,
   onRestoreBackup,
@@ -212,6 +217,7 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
       events,
       config: formData,
       activityLogs,
+      biometricLogs,
     };
 
     try {
@@ -262,6 +268,7 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
       events,
       config: formData,
       activityLogs,
+      biometricLogs,
     };
 
     const jsonStr = JSON.stringify(backupPayload, null, 2);
@@ -794,14 +801,66 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
           </div>
         </div>
 
-        {/* Geofencing Radius */}
+        {/* Geofencing Radius & Interactive Google Maps */}
         <div className="p-6 rounded-[2.5rem] bg-white border border-slate-200 shadow-xs space-y-4">
-          <h3 className="font-extrabold text-sm text-slate-900 flex items-center space-x-2">
-            <MapPin className="w-4 h-4 text-indigo-600" />
-            <span>Lokasi Geofencing & Koordinat Sekolah</span>
-          </h3>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div>
+              <h3 className="font-extrabold text-sm text-slate-900 flex items-center space-x-2">
+                <MapPin className="w-4 h-4 text-indigo-600" />
+                <span>Lokasi Geofencing & Koordinat Sekolah (Google Maps)</span>
+              </h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Klik pada peta atau gunakan deteksi GPS untuk menentukan titik pusat sekolah dan jangkauan radius presensi.
+              </p>
+            </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <button
+              type="button"
+              onClick={() => {
+                if (navigator.geolocation) {
+                  navigator.geolocation.getCurrentPosition(
+                    (pos) => {
+                      setFormData({
+                        ...formData,
+                        schoolLat: pos.coords.latitude,
+                        schoolLng: pos.coords.longitude,
+                      });
+                    },
+                    (err) => alert('Gagal membaca GPS: ' + err.message),
+                    { enableHighAccuracy: true }
+                  );
+                }
+              }}
+              className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold flex items-center space-x-1.5 cursor-pointer self-start transition-all"
+            >
+              <LocateFixed className="w-3.5 h-3.5" />
+              <span>Gunakan Lokasi GPS Saat Ini</span>
+            </button>
+          </div>
+
+          {/* Interactive Google Map */}
+          <div className="w-full rounded-2xl overflow-hidden border border-slate-200 shadow-inner">
+            <GoogleMapsGeofence
+              schoolLocation={{
+                lat: formData.schoolLat,
+                lng: formData.schoolLng,
+                name: formData.schoolName,
+              }}
+              radiusMeters={formData.maxRadiusMeters}
+              isInteractive={true}
+              showUserMarker={false}
+              height="280px"
+              onLocationChange={(coords) => {
+                setFormData({
+                  ...formData,
+                  schoolLat: coords.lat,
+                  schoolLng: coords.lng,
+                });
+              }}
+            />
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-1">
             <div>
               <label className="text-[11px] font-bold text-slate-700 block mb-1">
                 Latitude Pusat Sekolah
@@ -832,12 +891,30 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
               <label className="text-[11px] font-bold text-slate-700 block mb-1">
                 Radius Maksimal Presensi (Meter)
               </label>
-              <input
-                type="number"
-                value={formData.maxRadiusMeters}
-                onChange={(e) => setFormData({ ...formData, maxRadiusMeters: Number(e.target.value) })}
-                className="w-full text-xs px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 font-mono font-bold text-indigo-700"
-              />
+              <div className="space-y-1.5">
+                <input
+                  type="number"
+                  value={formData.maxRadiusMeters}
+                  onChange={(e) => setFormData({ ...formData, maxRadiusMeters: Number(e.target.value) })}
+                  className="w-full text-xs px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 font-mono font-bold text-indigo-700"
+                />
+                <div className="flex items-center space-x-1">
+                  {[50, 100, 200, 500].map((r) => (
+                    <button
+                      key={r}
+                      type="button"
+                      onClick={() => setFormData({ ...formData, maxRadiusMeters: r })}
+                      className={`text-[10px] px-2 py-0.5 rounded-lg border font-bold cursor-pointer transition-all ${
+                        formData.maxRadiusMeters === r
+                          ? 'bg-indigo-600 text-white border-indigo-600'
+                          : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      {r}m
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
         </div>

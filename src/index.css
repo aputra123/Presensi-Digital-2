@@ -31,4 +31,87 @@
   background: #94a3b8;
 }
 
+/* =========================================================
+   OFFICIAL SCHOOL REPORT PRINT MEDIA QUERIES (@media print)
+   Formats clean tables, prevents page cut-offs, hides UI overlays
+   ========================================================= */
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 12mm 12mm 15mm 12mm;
+  }
+
+  /* Hide entire application shell and modal background during print */
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    font-size: 10pt !important;
+  }
+
+  body * {
+    visibility: hidden;
+  }
+
+  /* Expose strictly the print document container */
+  #printable-area,
+  #printable-area * {
+    visibility: visible;
+  }
+
+  #printable-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    box-shadow: none !important;
+    border: none !important;
+  }
+
+  /* Prevent page breaks inside table rows, Kop Surat, and signature blocks */
+  table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    page-break-inside: auto;
+  }
+
+  thead {
+    display: table-header-group;
+  }
+
+  tr {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  th, td {
+    border: 1px solid #1e293b !important;
+    padding: 4pt 6pt !important;
+    color: #000000 !important;
+    font-size: 8.5pt !important;
+  }
+
+  th {
+    background-color: #f1f5f9 !important;
+    font-weight: bold !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .print-avoid-break {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  /* Remove all interactive elements in print */
+  button, input, select, .no-print {
+    display: none !important;
+  }
+}
+
+
 

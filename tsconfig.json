@@ -20,6 +20,11 @@
         "./*"
       ]
     },
+    "types": [
+      "vite/client",
+      "node",
+      "google.maps"
+    ],
     "allowImportingTsExtensions": true,
     "noEmit": true
   }

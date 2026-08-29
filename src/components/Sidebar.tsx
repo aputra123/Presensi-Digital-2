@@ -19,6 +19,7 @@ import {
   Cloud,
   FileCheck2,
   History,
+  UserCheck,
 } from 'lucide-react';
 import { ActiveTab, SchoolConfig, UserRole } from '../types';
 
@@ -81,8 +82,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
           id: 'selfie' as ActiveTab,
           label: 'Selfie + GPS & BKD',
           icon: Camera,
-          badge: 'BKD DKI',
+          badge: 'BKD',
           badgeColor: 'bg-amber-100 text-amber-800',
+        },
+        {
+          id: 'biometric_logs' as ActiveTab,
+          label: 'Log Biometrik Wajah',
+          icon: ShieldCheck,
+          badge: 'Face ID',
+          badgeColor: 'bg-indigo-100 text-indigo-700',
+        },
+        {
+          id: 'bkd_automation' as ActiveTab,
+          label: 'Otomasi BKD Taliabu',
+          icon: FileCheck2,
+          badge: '15:00 Otomatis',
+          badgeColor: 'bg-emerald-100 text-emerald-800',
         },
         {
           id: 'batch_class' as ActiveTab,
@@ -126,6 +141,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
           icon: Briefcase,
           badge: 'PNS/PPPK',
           badgeColor: 'bg-purple-100 text-purple-700',
+        },
+        {
+          id: 'duty_roster' as ActiveTab,
+          label: 'Jadwal Guru Piket',
+          icon: UserCheck,
+          badge: 'Piket Hari Ini',
+          badgeColor: 'bg-emerald-100 text-emerald-800',
         },
         {
           id: 'students' as ActiveTab,

@@ -1,4 +1,7 @@
 import React, { useState } from 'react';
+import * as XLSX from 'xlsx';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import {
   FileSpreadsheet,
   Download,
@@ -16,9 +19,16 @@ import {
   AlertCircle,
   Sparkles,
   ArrowUpDown,
+  Layers,
+  ExternalLink,
+  Table,
 } from 'lucide-react';
 import { AttendanceRecord, SchoolClass, SchoolConfig } from '../types';
 import { formatDateIndo } from '../utils/soundAndDate';
+import {
+  pairAttendanceByDateAndPerson,
+  downloadBkdCsvFile,
+} from '../utils/bkdTaliabuExport';
 
 interface RekapitulasiViewProps {
   records?: AttendanceRecord[];
@@ -36,6 +46,8 @@ export const RekapitulasiView: React.FC<RekapitulasiViewProps> = ({
   classes = [],
   config,
   onOpenPrintModal,
+  students = [],
+  teachers = [],
 }) => {
   const safeRecords = records || [];
   const safeClasses = classes || [];
@@ -50,6 +62,7 @@ export const RekapitulasiView: React.FC<RekapitulasiViewProps> = ({
   const [selectedStatus, setSelectedStatus] = useState<string>('ALL'); // 'ALL' | 'hadir' | 'terlambat' | 'izin' | 'sakit' | 'alpa'
   const [selectedPersonType, setSelectedPersonType] = useState<string>('ALL'); // 'ALL' | 'student' | 'teacher' | 'PNS' | 'PPPK'
   const [selectedClass, setSelectedClass] = useState<string>('ALL');
+  const [exportMode, setExportMode] = useState<'bkd_separate' | 'standard'>('bkd_separate');
 
   // Filter calculation
   const filteredRecords = safeRecords.filter((rec) => {
@@ -122,13 +135,247 @@ export const RekapitulasiView: React.FC<RekapitulasiViewProps> = ({
   const countIzinSakit = filteredRecords.filter((r) => r.status === 'izin' || r.status === 'sakit').length;
   const countAlpa = filteredRecords.filter((r) => r.status === 'alpa').length;
 
-  // Export to CSV Function
-  const exportToCSV = () => {
+  // Export to Excel (.xlsx) using SheetJS
+  const handleExportExcel = () => {
+    if (filteredRecords.length === 0) {
+      alert('Tidak ada data yang sesuai filter untuk diekspor ke Excel!');
+      return;
+    }
+
+    // Title and metadata rows
+    const metaRows = [
+      ['PEMERINTAH KABUPATEN PULAU TALIABU'],
+      ['DINAS PENDIDIKAN DAN KEBUDAYAAN'],
+      [config.schoolName.toUpperCase()],
+      [`NPSN: ${config.npsn} | Alamat: ${config.address}`],
+      [''],
+      ['LAPORAN REKAPITULASI PRESENSI & KEHADIRAN DIGITAL'],
+      [`Periode: ${dateFilterMode === 'today' ? 'Hari Ini (' + todayStr + ')' : dateFilterMode === 'month' ? 'Bulan ' + todayStr.substring(0, 7) : startDate + ' s/d ' + endDate} | Semester: ${config.semester} T.A ${config.academicYear}`],
+      [`Tanggal Ekspor: ${new Date().toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })} Pukul ${new Date().toLocaleTimeString('id-ID')} WIB`],
+      [''],
+      ['STATISTIK KEHADIRAN:'],
+      [`Total Record: ${filteredRecords.length}`, `Hadir: ${countHadir}`, `Terlambat: ${countTerlambat}`, `Izin/Sakit: ${countIzinSakit}`, `Alpa: ${countAlpa}`],
+      [''],
+    ];
+
+    const tableHeaders = [
+      'No',
+      'Tanggal',
+      'Waktu',
+      'Nama Lengkap',
+      'Kategori',
+      'NISN / NIP',
+      'Rombel / Jabatan',
+      'Sesi Presensi',
+      'Status Kehadiran',
+      'Metode Presensi',
+      'Titik Lokasi / Koordinat',
+      'Link Google Drive Foto',
+      'Keterangan / Catatan',
+    ];
+
+    const tableRows = filteredRecords.map((r, index) => {
+      const driveUrl = r.photoUrl
+        ? `https://drive.google.com/file/d/1taliabu_face_${r.id}/view`
+        : '-';
+
+      return [
+        index + 1,
+        r.date,
+        `${r.time} WIB`,
+        r.personName,
+        r.personType === 'teacher' ? 'Guru / GTK' : 'Siswa',
+        r.identifier,
+        r.employmentStatus || r.classOrSubject,
+        r.type === 'masuk' ? 'Presensi Masuk' : 'Presensi Pulang',
+        r.status.toUpperCase(),
+        r.method === 'selfie_gps' ? 'Biometrik Selfie + GPS' : 'QR Code Scanner',
+        r.location?.address || 'Area Sekolah',
+        driveUrl,
+        r.note || '-',
+      ];
+    });
+
+    const fullSheetData = [...metaRows, tableHeaders, ...tableRows];
+    const worksheet = XLSX.utils.aoa_to_sheet(fullSheetData);
+
+    // Auto-fit column widths
+    worksheet['!cols'] = [
+      { wch: 6 },
+      { wch: 13 },
+      { wch: 13 },
+      { wch: 28 },
+      { wch: 14 },
+      { wch: 20 },
+      { wch: 18 },
+      { wch: 16 },
+      { wch: 16 },
+      { wch: 24 },
+      { wch: 30 },
+      { wch: 45 },
+      { wch: 30 },
+    ];
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Rekap Presensi');
+
+    const cleanSchoolName = config.schoolName.replace(/[^a-zA-Z0-9]/g, '_');
+    const fileName = `Rekap_Presensi_${cleanSchoolName}_${startDate}_sd_${endDate}.xlsx`;
+    XLSX.writeFile(workbook, fileName);
+  };
+
+  // Export to PDF (.pdf) using jsPDF & autoTable
+  const handleExportPDF = () => {
+    if (filteredRecords.length === 0) {
+      alert('Tidak ada data yang sesuai filter untuk diekspor ke PDF!');
+      return;
+    }
+
+    const doc = new jsPDF({
+      orientation: 'landscape',
+      unit: 'mm',
+      format: 'a4',
+    });
+
+    // Official School Letterhead (Kop Surat)
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(11);
+    doc.setTextColor(30, 41, 59);
+    doc.text('PEMERINTAH KABUPATEN PULAU TALIABU', 148.5, 13, { align: 'center' });
+    doc.setFontSize(10);
+    doc.text('DINAS PENDIDIKAN DAN KEBUDAYAAN', 148.5, 18, { align: 'center' });
+    doc.setFontSize(13);
+    doc.setTextColor(15, 23, 42);
+    doc.text(config.schoolName.toUpperCase(), 148.5, 24, { align: 'center' });
+    doc.setTextColor(71, 85, 105);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8.5);
+    doc.text(`${config.address} - NPSN: ${config.npsn}`, 148.5, 29, { align: 'center' });
+
+    // Double horizontal separator rule
+    doc.setDrawColor(30, 41, 59);
+    doc.setLineWidth(0.7);
+    doc.line(14, 32, 283, 32);
+    doc.setLineWidth(0.2);
+    doc.line(14, 33, 283, 33);
+
+    // Document Title & Metadata
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(11);
+    doc.setTextColor(15, 23, 42);
+    doc.text('LAPORAN REKAPITULASI PRESENSI & KEHADIRAN DIGITAL', 148.5, 39, { align: 'center' });
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(71, 85, 105);
+    const periodLabel = dateFilterMode === 'today' ? `Hari Ini (${todayStr})` : dateFilterMode === 'month' ? `Bulan ${todayStr.substring(0, 7)}` : `${startDate} s/d ${endDate}`;
+    doc.text(`Periode: ${periodLabel}  |  Semester: ${config.semester} T.A ${config.academicYear}`, 148.5, 44, { align: 'center' });
+
+    // Quick Stats Bar
+    doc.setFillColor(241, 245, 249);
+    doc.setDrawColor(203, 213, 225);
+    doc.roundedRect(14, 47, 269, 8.5, 1.5, 1.5, 'FD');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7.5);
+    doc.setTextColor(15, 23, 42);
+    doc.text(`Total Baris: ${filteredRecords.length}   |   Hadir: ${countHadir}   |   Terlambat: ${countTerlambat}   |   Izin & Sakit: ${countIzinSakit}   |   Alpa: ${countAlpa}`, 18, 52.5);
+
+    // Table Content
+    const headers = [['No', 'Tanggal', 'Waktu', 'Nama Lengkap', 'Kategori', 'NISN / NIP', 'Rombel / Jabatan', 'Sesi', 'Status', 'Metode']];
+    const rows = filteredRecords.map((r, i) => [
+      i + 1,
+      r.date,
+      `${r.time} WIB`,
+      r.personName,
+      r.personType === 'teacher' ? 'GTK' : 'Siswa',
+      r.identifier,
+      r.employmentStatus || r.classOrSubject,
+      r.type === 'masuk' ? 'Masuk' : 'Pulang',
+      r.status.toUpperCase(),
+      r.method === 'selfie_gps' ? 'Biometrik' : 'QR Code',
+    ]);
+
+    autoTable(doc, {
+      head: headers,
+      body: rows,
+      startY: 58,
+      theme: 'grid',
+      headStyles: {
+        fillColor: [15, 23, 42],
+        textColor: [255, 255, 255],
+        fontStyle: 'bold',
+        fontSize: 7.5,
+        halign: 'center',
+      },
+      bodyStyles: {
+        fontSize: 7,
+        textColor: [30, 41, 59],
+      },
+      columnStyles: {
+        0: { cellWidth: 10, halign: 'center' },
+        1: { cellWidth: 22, halign: 'center' },
+        2: { cellWidth: 18, halign: 'center' },
+        3: { cellWidth: 50 },
+        4: { cellWidth: 18, halign: 'center' },
+        5: { cellWidth: 32 },
+        6: { cellWidth: 32 },
+        7: { cellWidth: 18, halign: 'center' },
+        8: { cellWidth: 20, halign: 'center' },
+        9: { cellWidth: 22, halign: 'center' },
+      },
+      didDrawPage: (data: any) => {
+        // Page footer
+        doc.setFontSize(7);
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(100, 116, 139);
+        doc.text(
+          `Dicetak resmi melalui SIM Presensi ${config.schoolName} - Halaman ${data.pageNumber}`,
+          14,
+          doc.internal.pageSize.height - 6
+        );
+        doc.text(
+          `Waktu Cetak: ${new Date().toLocaleString('id-ID')} WIB`,
+          doc.internal.pageSize.width - 14,
+          doc.internal.pageSize.height - 6,
+          { align: 'right' }
+        );
+      },
+    });
+
+    // Signature endorsement block
+    const finalY = (doc as any).lastAutoTable?.finalY || 140;
+    if (finalY < 155) {
+      const signY = finalY + 10;
+      doc.setFontSize(8);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(15, 23, 42);
+      doc.text('Mengetahui,', 225, signY);
+      doc.text('Kepala Sekolah SMPN 4 Satap Taliabu Barat', 225, signY + 4.5);
+      doc.setFont('helvetica', 'bold');
+      doc.text(config.headmasterName, 225, signY + 20);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`NIP. ${config.headmasterNip}`, 225, signY + 24);
+    }
+
+    const cleanSchoolName = config.schoolName.replace(/[^a-zA-Z0-9]/g, '_');
+    doc.save(`Laporan_Presensi_${cleanSchoolName}_${startDate}_sd_${endDate}.pdf`);
+  };
+
+  // Export Function (Supports both BKD Separate Columns and Standard CSV)
+  const handleExportCSV = () => {
     if (filteredRecords.length === 0) {
       alert('Tidak ada data yang sesuai filter untuk diekspor!');
       return;
     }
 
+    if (exportMode === 'bkd_separate') {
+      // Export using BKD separate Masuk / Pulang columns with Drive Photo links
+      const paired = pairAttendanceByDateAndPerson(filteredRecords, teachers, students);
+      downloadBkdCsvFile(paired, config, dateFilterMode === 'month' ? 'Bulanan' : dateFilterMode === '7days' ? 'Mingguan' : 'Harian');
+      return;
+    }
+
+    // Standard CSV Export
     const headers = [
       'No',
       'Tanggal',
@@ -141,23 +388,31 @@ export const RekapitulasiView: React.FC<RekapitulasiViewProps> = ({
       'Status Kehadiran',
       'Metode Presensi',
       'Lokasi & Koordinat',
+      'Link Google Drive Foto',
       'Catatan / Keterangan',
     ];
 
-    const rows = filteredRecords.map((r, index) => [
-      index + 1,
-      r.date,
-      `${r.time} WIB`,
-      `"${r.personName.replace(/"/g, '""')}"`,
-      r.personType === 'teacher' ? 'Guru/GTK' : 'Siswa',
-      `'${r.identifier}`,
-      `"${(r.employmentStatus || r.classOrSubject).replace(/"/g, '""')}"`,
-      r.type === 'masuk' ? 'Presensi Masuk' : 'Presensi Pulang',
-      r.status.toUpperCase(),
-      r.method === 'selfie_gps' ? 'Selfie + GPS' : 'QR Code',
-      `"${(r.location?.address || 'Sekolah').replace(/"/g, '""')}"`,
-      `"${(r.note || '').replace(/"/g, '""')}"`,
-    ]);
+    const rows = filteredRecords.map((r, index) => {
+      const driveUrl = r.photoUrl
+        ? `https://drive.google.com/file/d/1taliabu_face_${r.id}/view`
+        : '-';
+
+      return [
+        index + 1,
+        r.date,
+        `${r.time} WIB`,
+        `"${r.personName.replace(/"/g, '""')}"`,
+        r.personType === 'teacher' ? 'Guru/GTK' : 'Siswa',
+        `'${r.identifier}`,
+        `"${(r.employmentStatus || r.classOrSubject).replace(/"/g, '""')}"`,
+        r.type === 'masuk' ? 'Presensi Masuk' : 'Presensi Pulang',
+        r.status.toUpperCase(),
+        r.method === 'selfie_gps' ? 'Selfie + GPS' : 'QR Code',
+        `"${(r.location?.address || 'Sekolah').replace(/"/g, '""')}"`,
+        `"${driveUrl}"`,
+        `"${(r.note || '').replace(/"/g, '""')}"`,
+      ];
+    });
 
     const csvContent =
       '\uFEFF' + // UTF-8 BOM for Excel support
@@ -179,7 +434,7 @@ export const RekapitulasiView: React.FC<RekapitulasiViewProps> = ({
   return (
     <div className="space-y-6">
       {/* Header Bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 lg:p-6 rounded-3xl border border-slate-200 shadow-xs">
+      <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 bg-white p-5 lg:p-6 rounded-3xl border border-slate-200 shadow-xs">
         <div>
           <div className="flex items-center space-x-2.5">
             <div className="w-10 h-10 rounded-2xl bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold">
@@ -190,13 +445,68 @@ export const RekapitulasiView: React.FC<RekapitulasiViewProps> = ({
                 Rekapitulasi & Log Presensi Digital
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
-                Filter spesifik tanggal, kategori kehadiran, ekspor CSV, dan cetak berita acara
+                Filter spesifik tanggal, kategori kehadiran, ekspor PDF/Excel resmi, dan cetak berita acara
               </p>
             </div>
           </div>
         </div>
 
-        <div className="flex items-center space-x-2.5">
+        <div className="flex items-center space-x-2 flex-wrap gap-y-2">
+          {/* Export Mode Toggle */}
+          <div className="flex items-center space-x-1 bg-slate-100 p-1 rounded-2xl text-[11px] font-bold">
+            <button
+              onClick={() => setExportMode('bkd_separate')}
+              className={`px-2.5 py-1.5 rounded-xl transition-all cursor-pointer ${
+                exportMode === 'bkd_separate'
+                  ? 'bg-emerald-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Format BKD
+            </button>
+            <button
+              onClick={() => setExportMode('standard')}
+              className={`px-2.5 py-1.5 rounded-xl transition-all cursor-pointer ${
+                exportMode === 'standard'
+                  ? 'bg-slate-800 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Standar
+            </button>
+          </div>
+
+          {/* Export Excel Button */}
+          <button
+            id="export-excel-btn"
+            onClick={handleExportExcel}
+            className="px-3.5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl text-xs font-bold flex items-center space-x-1.5 transition-all cursor-pointer shadow-md shadow-emerald-600/20"
+            title="Unduh format spreadsheet Microsoft Excel (.xlsx) dengan kop surat dan ringkasan"
+          >
+            <Table className="w-4 h-4" />
+            <span>Ekspor Excel (.xlsx)</span>
+          </button>
+
+          {/* Export PDF Button */}
+          <button
+            id="export-pdf-btn"
+            onClick={handleExportPDF}
+            className="px-3.5 py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-2xl text-xs font-bold flex items-center space-x-1.5 transition-all cursor-pointer shadow-md shadow-rose-600/20"
+            title="Unduh dokumen resmi PDF ber-kop surat Dinas Pendidikan & TTD Kepala Sekolah"
+          >
+            <FileText className="w-4 h-4" />
+            <span>Ekspor PDF (.pdf)</span>
+          </button>
+
+          {/* Export CSV Button */}
+          <button
+            onClick={handleExportCSV}
+            className="px-3.5 py-2.5 bg-slate-800 hover:bg-slate-900 text-white rounded-2xl text-xs font-bold flex items-center space-x-1.5 transition-all cursor-pointer shadow-xs"
+          >
+            <Download className="w-4 h-4" />
+            <span>CSV {exportMode === 'bkd_separate' ? 'BKD' : ''}</span>
+          </button>
+
           {onOpenPrintModal && (
             <button
               onClick={onOpenPrintModal}
@@ -206,14 +516,6 @@ export const RekapitulasiView: React.FC<RekapitulasiViewProps> = ({
               <span>Cetak Berita Acara</span>
             </button>
           )}
-
-          <button
-            onClick={exportToCSV}
-            className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl text-xs font-bold flex items-center space-x-2 transition-all cursor-pointer shadow-md shadow-emerald-600/20"
-          >
-            <Download className="w-4 h-4" />
-            <span>Ekspor CSV ({filteredRecords.length})</span>
-          </button>
         </div>
       </div>
 

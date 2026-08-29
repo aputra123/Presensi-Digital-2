@@ -198,6 +198,29 @@ export interface ActivityLog {
   deviceInfo?: string;
 }
 
+export interface BiometricLog {
+  id: string;
+  timestamp: string; // YYYY-MM-DD HH:mm:ss
+  date: string; // YYYY-MM-DD
+  time: string; // HH:mm:ss
+  personId: string;
+  personName: string;
+  identifier: string; // NISN or NIP
+  personType: 'student' | 'teacher';
+  classOrSubject: string;
+  status: 'verified' | 'failed' | 'flagged';
+  matchScore: number; // 0 - 100%
+  threshold: number; // e.g. 80%
+  livenessPassed: boolean;
+  gpsPassed: boolean;
+  distanceMeter: number;
+  cameraFacing: 'user' | 'environment';
+  deviceId?: string;
+  failureReason?: string; // e.g., "Skor kemiripan 64% di bawah ambang batas (80%)"
+  photoThumbnail?: string;
+  ipOrDevice?: string;
+}
+
 export interface AppBackupData {
   id: string;
   timestamp: string;
@@ -218,7 +241,25 @@ export interface AppBackupData {
   gtkServices: GtkServiceRequest[];
   events: AcademicEvent[];
   config: SchoolConfig;
+  biometricLogs?: BiometricLog[];
   activityLogs?: ActivityLog[];
+  dutyRoster?: DutyAssignment[];
+}
+
+export type DayOfWeek = 'senin' | 'selasa' | 'rabu' | 'kamis' | 'jumat' | 'sabtu';
+
+export interface DutyAssignment {
+  id: string;
+  day: DayOfWeek;
+  teacherId: string;
+  teacherName: string;
+  nip: string;
+  avatar: string;
+  roleTitle: string; // e.g. "Koordinator Piket", "Petugas Gerbang & Presensi", "Pemantau KBM & Kelas", "Piket Kebersihan & Ketertiban"
+  shiftTime: string; // e.g. "06:15 - 14:30"
+  phone: string;
+  notes?: string;
+  assignedAt?: string;
 }
 
 export interface BackupSummary {
@@ -246,8 +287,11 @@ export type ActiveTab =
   | 'dashboard'
   | 'scan'
   | 'selfie'
+  | 'biometric_logs'
+  | 'duty_roster'
   | 'batch_class'
   | 'rekap'
+  | 'bkd_automation'
   | 'layanan_gtk'
   | 'leaves'
   | 'teachers'

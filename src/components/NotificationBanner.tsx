@@ -11,6 +11,7 @@ import {
   ArrowRight,
   Shield,
   Send,
+  HardDrive,
 } from 'lucide-react';
 import { ActiveTab, LeaveRequest, SchoolConfig, ToastNotification, UserRole } from '../types';
 
@@ -19,6 +20,7 @@ interface NotificationBannerProps {
   onDismissToast?: (id: string) => void;
   onReviewLeave?: (leaveId?: string) => void;
   onTriggerSimulation?: () => void;
+  onOpenBackupPrompt?: () => void;
   pendingLeaves?: LeaveRequest[];
   activeTab: ActiveTab;
   setActiveTab: (tab: ActiveTab) => void;
@@ -32,6 +34,7 @@ export const NotificationBanner: React.FC<NotificationBannerProps> = ({
   onDismissToast = (_id?: string) => {},
   onReviewLeave = (_leaveId?: string) => {},
   onTriggerSimulation = () => {},
+  onOpenBackupPrompt,
   pendingLeaves = [],
   activeTab,
   setActiveTab,
@@ -109,6 +112,18 @@ export const NotificationBanner: React.FC<NotificationBannerProps> = ({
             </button>
           )}
 
+          {/* Quick Daily Backup Button */}
+          {onOpenBackupPrompt && (
+            <button
+              onClick={onOpenBackupPrompt}
+              className="hidden sm:flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs font-bold hover:bg-amber-100 transition-all cursor-pointer shadow-2xs"
+              title="Cadangkan seluruh data presensi harian ke file JSON"
+            >
+              <HardDrive className="w-3.5 h-3.5 text-amber-600" />
+              <span>Backup Harian</span>
+            </button>
+          )}
+
           {/* Simulate Notification Button */}
           <button
             onClick={onTriggerSimulation}
@@ -124,9 +139,9 @@ export const NotificationBanner: React.FC<NotificationBannerProps> = ({
 
       {/* Floating Active Toasts / Banners */}
       <div className="fixed bottom-5 right-5 z-50 flex flex-col space-y-2.5 max-w-md w-[calc(100vw-2.5rem)] pointer-events-none">
-        {notifications.map((toast) => (
+        {notifications.map((toast, index) => (
           <div
-            key={toast.id}
+            key={`${toast.id || 'notif'}_${index}`}
             className="pointer-events-auto bg-slate-900 text-white p-4 rounded-2xl shadow-2xl border border-slate-700/80 flex items-start space-x-3.5 animate-bounce-short"
           >
             <div className="w-9 h-9 rounded-xl bg-amber-500/20 border border-amber-400/30 flex items-center justify-center text-amber-400 shrink-0 mt-0.5">
