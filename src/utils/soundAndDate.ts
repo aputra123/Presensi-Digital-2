@@ -1,5 +1,9 @@
-export const formatTimeIndo = (dateObj: Date): string => {
-  return dateObj.toLocaleTimeString('id-ID', {
+export const TIMEZONE_WITA = 'Asia/Makassar';
+
+export const formatTimeIndo = (dateObj: Date | string | number): string => {
+  const d = typeof dateObj === 'string' || typeof dateObj === 'number' ? new Date(dateObj) : dateObj;
+  return d.toLocaleTimeString('id-ID', {
+    timeZone: TIMEZONE_WITA,
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
@@ -9,13 +13,61 @@ export const formatTimeIndo = (dateObj: Date): string => {
 
 export const formatDateIndo = (dateStr: string): string => {
   if (!dateStr) return '';
+  // Support either YYYY-MM-DD or full timestamp
+  if (dateStr.includes('T') || dateStr.includes(' ') || dateStr.includes(':')) {
+    const d = new Date(dateStr);
+    return d.toLocaleDateString('id-ID', {
+      timeZone: TIMEZONE_WITA,
+      weekday: 'long',
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+    });
+  }
   const [year, month, day] = dateStr.split('-');
-  const dateObj = new Date(Number(year), Number(month) - 1, Number(day));
+  const dateObj = new Date(Number(year), Number(month) - 1, Number(day), 12, 0, 0);
   return dateObj.toLocaleDateString('id-ID', {
+    timeZone: TIMEZONE_WITA,
     weekday: 'long',
     day: 'numeric',
     month: 'long',
     year: 'numeric',
+  });
+};
+
+export const formatDateTimeWita = (dateObj: Date | string | number): string => {
+  if (!dateObj) return '-';
+  const d = typeof dateObj === 'string' || typeof dateObj === 'number' ? new Date(dateObj) : dateObj;
+  return d.toLocaleString('id-ID', {
+    timeZone: TIMEZONE_WITA,
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+};
+
+export const getTodayDateString = (d: Date = new Date()): string => {
+  // Format YYYY-MM-DD accurately in WITA (Asia/Makassar)
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: TIMEZONE_WITA,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+  return formatter.format(d);
+};
+
+export const getCurrentTimeWita = (d: Date = new Date()): string => {
+  return d.toLocaleTimeString('id-ID', {
+    timeZone: TIMEZONE_WITA,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
   });
 };
 

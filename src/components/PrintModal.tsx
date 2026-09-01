@@ -11,6 +11,9 @@ import {
   Layers,
   Sparkles,
   Download,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
 } from 'lucide-react';
 import { AttendanceRecord, SchoolConfig, Student } from '../types';
 import { formatDateIndo } from '../utils/soundAndDate';
@@ -20,7 +23,9 @@ interface PrintModalProps {
   config: SchoolConfig;
   records?: AttendanceRecord[];
   students?: Student[];
-  todayDate: string;
+  todayDate?: string;
+  dateRangeLabel?: string;
+  customTitle?: string;
 }
 
 export const PrintModal: React.FC<PrintModalProps> = ({
@@ -28,31 +33,63 @@ export const PrintModal: React.FC<PrintModalProps> = ({
   config,
   records = [],
   students = [],
-  todayDate,
+  todayDate = new Date().toISOString().split('T')[0],
+  dateRangeLabel,
+  customTitle,
 }) => {
   const [selectedClassFilter, setSelectedClassFilter] = useState<string>('ALL');
   const [showSignatureBlock, setShowSignatureBlock] = useState(true);
   const [includeOfficialStamp, setIncludeOfficialStamp] = useState(true);
+  const [sortField, setSortField] = useState<'name' | 'time' | 'status' | 'default'>('default');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
 
   const safeRecords = records || [];
   const safeStudents = students || [];
 
-  // Filter records by date and class filter
-  const todayRecords = safeRecords.filter((r) => {
-    const matchesDate = r.date === todayDate;
-    const matchesPerson = r.personType === 'student' || r.personType === 'teacher';
+  // Filter records by class filter (if dateRangeLabel is not provided, filter by todayDate)
+  const baseFilteredRecords = safeRecords.filter((r) => {
     const matchesClass =
       selectedClassFilter === 'ALL' ||
       (r.classOrSubject && r.classOrSubject.toLowerCase().includes(selectedClassFilter.toLowerCase()));
-    return matchesDate && matchesPerson && matchesClass;
+    
+    if (dateRangeLabel) {
+      return matchesClass;
+    }
+    return r.date === todayDate && matchesClass;
   });
 
-  const presentCount = todayRecords.filter((r) => r.status === 'hadir').length;
-  const lateCount = todayRecords.filter((r) => r.status === 'terlambat').length;
-  const sickCount = todayRecords.filter((r) => r.status === 'sakit').length;
-  const leaveCount = todayRecords.filter((r) => r.status === 'izin').length;
-  const alphaCount = todayRecords.filter((r) => r.status === 'alpa').length;
-  const totalCount = todayRecords.length;
+  // Sort records dynamically
+  const displayRecords = [...baseFilteredRecords].sort((a, b) => {
+    if (sortField === 'name') {
+      const cmp = a.personName.localeCompare(b.personName);
+      return sortDirection === 'asc' ? cmp : -cmp;
+    }
+    if (sortField === 'time') {
+      const cmp = `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`);
+      return sortDirection === 'asc' ? cmp : -cmp;
+    }
+    if (sortField === 'status') {
+      const cmp = a.status.localeCompare(b.status);
+      return sortDirection === 'asc' ? cmp : -cmp;
+    }
+    return 0;
+  });
+
+  const handleSort = (field: 'name' | 'time' | 'status') => {
+    if (sortField === field) {
+      setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortField(field);
+      setSortDirection('asc');
+    }
+  };
+
+  const presentCount = displayRecords.filter((r) => r.status === 'hadir').length;
+  const lateCount = displayRecords.filter((r) => r.status === 'terlambat').length;
+  const sickCount = displayRecords.filter((r) => r.status === 'sakit').length;
+  const leaveCount = displayRecords.filter((r) => r.status === 'izin').length;
+  const alphaCount = displayRecords.filter((r) => r.status === 'alpa').length;
+  const totalCount = displayRecords.length;
 
   const handlePrint = () => {
     window.print();
@@ -62,6 +99,8 @@ export const PrintModal: React.FC<PrintModalProps> = ({
   const distinctClasses = Array.from(
     new Set(safeStudents.map((s) => s.className).filter(Boolean))
   ).sort();
+
+  const activePeriodText = dateRangeLabel || formatDateIndo(todayDate);
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 animate-in fade-in duration-200">
@@ -77,10 +116,10 @@ export const PrintModal: React.FC<PrintModalProps> = ({
             </div>
             <div>
               <h3 className="font-extrabold text-base text-slate-900">
-                Cetak Dokumen Resmi / Ekspor PDF
+                {customTitle || 'Cetak Dokumen Resmi / Ekspor PDF Berita Acara'}
               </h3>
               <p className="text-xs text-slate-500">
-                Format Berita Acara Rekapitulasi Presensi Sesuai Standar Kedinasan (A4)
+                Periode: <strong>{activePeriodText}</strong> • Format Berita Acara Rekapitulasi Presensi Standar Kedinasan (A4)
               </p>
             </div>
           </div>
@@ -92,7 +131,7 @@ export const PrintModal: React.FC<PrintModalProps> = ({
               onChange={(e) => setSelectedClassFilter(e.target.value)}
               className="px-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-700 shadow-xs focus:ring-2 focus:ring-indigo-500"
             >
-              <option value="ALL">Semua Rombel & GTK ({safeRecords.filter((r) => r.date === todayDate).length})</option>
+              <option value="ALL">Semua Rombel & GTK ({safeRecords.length})</option>
               {distinctClasses.map((cls) => (
                 <option key={cls} value={cls}>
                   Kelas {cls}
@@ -133,8 +172,32 @@ export const PrintModal: React.FC<PrintModalProps> = ({
             </label>
           </div>
 
-          <div className="text-[11px] text-indigo-700 font-medium">
-            💡 Tips: Di dialog print browser, pilih <strong>&quot;Save as PDF&quot;</strong> dan kertas <strong>A4</strong>.
+          <div className="text-[11px] text-indigo-700 font-medium flex items-center space-x-2">
+            <span>Urutkan:</span>
+            <button
+              onClick={() => handleSort('name')}
+              className={`px-2 py-0.5 rounded-md font-bold transition-all ${
+                sortField === 'name' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-700 border border-slate-200'
+              }`}
+            >
+              Nama {sortField === 'name' && (sortDirection === 'asc' ? '↑' : '↓')}
+            </button>
+            <button
+              onClick={() => handleSort('time')}
+              className={`px-2 py-0.5 rounded-md font-bold transition-all ${
+                sortField === 'time' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-700 border border-slate-200'
+              }`}
+            >
+              Waktu {sortField === 'time' && (sortDirection === 'asc' ? '↑' : '↓')}
+            </button>
+            <button
+              onClick={() => handleSort('status')}
+              className={`px-2 py-0.5 rounded-md font-bold transition-all ${
+                sortField === 'status' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-700 border border-slate-200'
+              }`}
+            >
+              Status {sortField === 'status' && (sortDirection === 'asc' ? '↑' : '↓')}
+            </button>
           </div>
         </div>
 
@@ -157,7 +220,7 @@ export const PrintModal: React.FC<PrintModalProps> = ({
             )}
             <div className="text-center flex-1 space-y-0.5">
               <h2 className="font-bold text-xs uppercase tracking-widest text-slate-600">
-                PEMERINTAH PROVINSI DAERAH KHUSUS JAKARTA • DINAS PENDIDIKAN
+                PEMERINTAH KABUPATEN PULAU TALIABU • DINAS PENDIDIKAN
               </h2>
               <h1 className="font-extrabold text-xl sm:text-2xl tracking-tight text-slate-900">
                 {config.schoolName}
@@ -174,10 +237,10 @@ export const PrintModal: React.FC<PrintModalProps> = ({
           {/* Judul Berita Acara */}
           <div className="text-center space-y-1 pt-1 print-avoid-break">
             <h3 className="font-extrabold text-sm uppercase underline tracking-wider">
-              BERITA ACARA REKAPITULASI PRESENSI HARIAN
+              {customTitle || 'BERITA ACARA REKAPITULASI PRESENSI DIGITAL'}
             </h3>
             <p className="text-xs text-slate-600">
-              Hari/Tanggal: <strong>{formatDateIndo(todayDate)}</strong> • Semester {config.semester} TP {config.academicYear}
+              Periode: <strong>{activePeriodText}</strong> • Semester {config.semester} TP {config.academicYear}
             </p>
           </div>
 
@@ -215,29 +278,68 @@ export const PrintModal: React.FC<PrintModalProps> = ({
               <thead>
                 <tr className="bg-slate-100 border-b border-slate-300 text-[10px] font-bold text-slate-700">
                   <th className="p-2 text-center w-8 border-r border-slate-300">No</th>
-                  <th className="p-2 border-r border-slate-300">Nama Lengkap</th>
+                  <th
+                    onClick={() => handleSort('name')}
+                    className="p-2 border-r border-slate-300 cursor-pointer hover:bg-slate-200 select-none"
+                    title="Klik untuk sortir Nama"
+                  >
+                    <div className="flex items-center space-x-1">
+                      <span>Nama Lengkap</span>
+                      {sortField === 'name' ? (
+                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3 text-indigo-600" /> : <ArrowDown className="w-3 h-3 text-indigo-600" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 text-slate-400 opacity-60" />
+                      )}
+                    </div>
+                  </th>
                   <th className="p-2 border-r border-slate-300">NIP / NISN</th>
                   <th className="p-2 border-r border-slate-300">Tipe / Kelas</th>
-                  <th className="p-2 border-r border-slate-300">Waktu Presensi</th>
-                  <th className="p-2 text-center border-r border-slate-300">Status</th>
+                  <th
+                    onClick={() => handleSort('time')}
+                    className="p-2 border-r border-slate-300 cursor-pointer hover:bg-slate-200 select-none"
+                    title="Klik untuk sortir Waktu"
+                  >
+                    <div className="flex items-center space-x-1">
+                      <span>Waktu Presensi</span>
+                      {sortField === 'time' ? (
+                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3 text-indigo-600" /> : <ArrowDown className="w-3 h-3 text-indigo-600" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 text-slate-400 opacity-60" />
+                      )}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleSort('status')}
+                    className="p-2 text-center border-r border-slate-300 cursor-pointer hover:bg-slate-200 select-none"
+                    title="Klik untuk sortir Status"
+                  >
+                    <div className="flex items-center justify-center space-x-1">
+                      <span>Status</span>
+                      {sortField === 'status' ? (
+                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3 text-indigo-600" /> : <ArrowDown className="w-3 h-3 text-indigo-600" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 text-slate-400 opacity-60" />
+                      )}
+                    </div>
+                  </th>
                   <th className="p-2">Verifikasi / Lokasi</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
-                {todayRecords.length === 0 ? (
+                {displayRecords.length === 0 ? (
                   <tr>
                     <td colSpan={7} className="p-4 text-center text-slate-400">
                       Tidak ada catatan presensi pada tanggal/filter ini.
                     </td>
                   </tr>
                 ) : (
-                  todayRecords.map((r, i) => (
+                  displayRecords.map((r, i) => (
                     <tr key={r.id} className="hover:bg-slate-50">
                       <td className="p-2 text-center border-r border-slate-200 font-mono">{i + 1}</td>
                       <td className="p-2 font-bold border-r border-slate-200 text-slate-900">{r.personName}</td>
                       <td className="p-2 border-r border-slate-200 font-mono text-[10px]">{r.identifier}</td>
                       <td className="p-2 border-r border-slate-200">{r.classOrSubject}</td>
-                      <td className="p-2 border-r border-slate-200 font-mono">{r.time} WIB ({r.type})</td>
+                      <td className="p-2 border-r border-slate-200 font-mono">{r.date} {r.time} ({r.type})</td>
                       <td className="p-2 text-center border-r border-slate-200 font-bold uppercase text-[10px]">
                         <span
                           className={`px-1.5 py-0.5 rounded ${
@@ -274,18 +376,18 @@ export const PrintModal: React.FC<PrintModalProps> = ({
                   <strong>Kepala Sekolah</strong>
                 </p>
                 <div>
-                  <p className="font-bold underline">{config.principalName || 'Dr. H. Mulyadi, M.Pd.'}</p>
-                  <p className="text-[11px] text-slate-500 font-mono">NIP. {config.principalNip || '197103151998021001'}</p>
+                  <p className="font-bold underline">{config.principalName || 'Drs. Ruslan La Ode, M.Pd.'}</p>
+                  <p className="text-[11px] text-slate-500 font-mono">NIP. {config.principalNip || '197405121999031004'}</p>
                 </div>
               </div>
 
               <div className="space-y-14 relative">
                 <p>
-                  Jakarta, {formatDateIndo(todayDate)}<br />
+                  Taliabu Barat, {formatDateIndo(todayDate)}<br />
                   <strong>Petugas Piket Harian</strong>
                 </p>
                 <div>
-                  <p className="font-bold underline">{config.adminName || 'Dra. Sri Wahyuni, M.Pd.'}</p>
+                  <p className="font-bold underline">{config.adminName || 'Hendra Hasan, S.Pd.'}</p>
                   <p className="text-[11px] text-slate-500 font-mono">Tim Presensi Sekolah</p>
                 </div>
 

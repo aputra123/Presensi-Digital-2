@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#312e81" />
+      <stop offset="50%" stop-color="#4338ca" />
+      <stop offset="100%" stop-color="#1e1b4b" />
+    </linearGradient>
+    <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fef08a" />
+      <stop offset="50%" stop-color="#eab308" />
+      <stop offset="100%" stop-color="#ca8a04" />
+    </linearGradient>
+    <linearGradient id="shieldGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.15" />
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0.02" />
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#000000" flood-opacity="0.4" />
+    </filter>
+  </defs>
+
+  <!-- Background with rounded corners for maskable icon -->
+  <rect width="512" height="512" rx="112" fill="url(#bgGrad)" />
+
+  <!-- Outer Ring Shield Accent -->
+  <circle cx="256" cy="256" r="210" fill="none" stroke="url(#goldGrad)" stroke-width="6" stroke-dasharray="12 8" opacity="0.85" />
+  <circle cx="256" cy="256" r="196" fill="url(#shieldGrad)" stroke="#ffffff" stroke-width="2" stroke-opacity="0.25" />
+
+  <!-- Center School Shield & Crest -->
+  <g filter="url(#shadow)">
+    <!-- School Building Top / Roof -->
+    <path d="M256 110 L370 170 L142 170 Z" fill="url(#goldGrad)" />
+    
+    <!-- Classical Pillars -->
+    <rect x="162" y="180" width="22" height="110" rx="4" fill="#ffffff" />
+    <rect x="214" y="180" width="22" height="110" rx="4" fill="#ffffff" />
+    <rect x="276" y="180" width="22" height="110" rx="4" fill="#ffffff" />
+    <rect x="328" y="180" width="22" height="110" rx="4" fill="#ffffff" />
+
+    <!-- Pillar Base & Podium -->
+    <rect x="135" y="295" width="242" height="18" rx="4" fill="url(#goldGrad)" />
+    <rect x="120" y="318" width="272" height="16" rx="4" fill="#ffffff" opacity="0.9" />
+
+    <!-- Open Book / Wisdom Emblem at Center -->
+    <path d="M256 220 Q220 200 175 210 L175 265 Q220 255 256 270 Q292 255 337 265 L337 210 Q292 200 256 220 Z" fill="#ffffff" stroke="#312e81" stroke-width="3" />
+    <path d="M256 220 L256 270" stroke="#312e81" stroke-width="3" />
+
+    <!-- Digital QR / Biometric Checkmark Badge at Bottom Center -->
+    <circle cx="256" cy="380" r="46" fill="#10b981" stroke="#ffffff" stroke-width="5" />
+    <path d="M238 380 L250 392 L276 366" fill="none" stroke="#ffffff" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" />
+  </g>
+
+  <!-- Star Accents -->
+  <polygon points="256,132 260,144 273,144 262,152 266,164 256,156 246,164 250,152 239,144 252,144" fill="#ffffff" />
+</svg>

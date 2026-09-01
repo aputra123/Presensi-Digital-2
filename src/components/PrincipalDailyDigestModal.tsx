@@ -71,15 +71,20 @@ export const PrincipalDailyDigestModal: React.FC<PrincipalDailyDigestModalProps>
 
   const todayStr = new Date().toISOString().split('T')[0];
 
+  const safeRecords = records || [];
+  const safeLeaveRequests = leaveRequests || [];
+  const safeTeachers = teachers || [];
+  const safeStudents = students || [];
+
   // 1. Pending Leaves (Izin & Sakit)
   const pendingLeaves = useMemo(() => {
-    return leaveRequests.filter((l) => l.status === 'pending');
-  }, [leaveRequests]);
+    return safeLeaveRequests.filter((l) => l.status === 'pending');
+  }, [safeLeaveRequests]);
 
   // 2. Abnormal Attendance Flags from the last 24 hours
   const abnormalFlags = useMemo(() => {
     const flags: AbnormalAttendanceFlag[] = [];
-    const todayRecs = records.filter((r) => r.date === todayStr);
+    const todayRecs = safeRecords.filter((r) => r.date === todayStr);
 
     todayRecs.forEach((rec) => {
       // Flag 1: Di luar radius geofence
@@ -144,8 +149,8 @@ export const PrincipalDailyDigestModal: React.FC<PrincipalDailyDigestModalProps>
   }, [records, todayStr, config]);
 
   // Executive Summary stats
-  const totalRegistered = teachers.length + students.length;
-  const todayRecs = records.filter((r) => r.date === todayStr);
+  const totalRegistered = safeTeachers.length + safeStudents.length;
+  const todayRecs = safeRecords.filter((r) => r.date === todayStr);
   const presentToday = todayRecs.filter((r) => r.status === 'hadir' || r.status === 'terlambat').length;
   const attendanceRate = totalRegistered > 0 ? Math.round((presentToday / totalRegistered) * 100) : 95;
 

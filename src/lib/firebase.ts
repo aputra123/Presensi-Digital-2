@@ -54,6 +54,19 @@ export const logoutGoogle = async () => {
 // FIRESTORE BACKUP & RESTORE UTILITIES
 // ==========================================
 
+// Helper to timeout long-hanging network calls in low-connectivity environments (Pulau Taliabu)
+const withTimeout = <T>(promise: Promise<T>, timeoutMs = 8000, fallbackVal?: T): Promise<T> => {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`Koneksi Firestore timeout (${timeoutMs}ms)`)), timeoutMs)
+    ),
+  ]).catch((err) => {
+    if (fallbackVal !== undefined) return fallbackVal;
+    throw err;
+  });
+};
+
 export const saveBackupToFirestore = async (
   backupData: AppBackupData
 ): Promise<{ success: boolean; id: string; timestamp: string; message: string }> => {
@@ -78,7 +91,7 @@ export const saveBackupToFirestore = async (
       backupData: JSON.stringify(backupData),
     };
 
-    await setDoc(backupRef, payload);
+    await withTimeout(setDoc(backupRef, payload), 7000);
 
     // Save summary in localStorage as well
     try {
@@ -109,7 +122,7 @@ export const saveBackupToFirestore = async (
       message: `Pencadangan Firestore berhasil! Disimpan di koleksi 'backups/${cleanId}'.`,
     };
   } catch (error: any) {
-    console.error('Firestore Backup Error:', error);
+    console.warn('Firestore Backup Error / Offline:', error);
     // Fallback to local storage if network or offline
     try {
       const cleanId = `local_backup_${Date.now()}`;
@@ -134,7 +147,7 @@ export const saveBackupToFirestore = async (
 export const fetchFirestoreBackups = async (): Promise<BackupSummary[]> => {
   try {
     const backupsCol = collection(db, 'backups');
-    const snapshot = await getDocs(backupsCol);
+    const snapshot = await withTimeout(getDocs(backupsCol), 6000);
     const results: BackupSummary[] = [];
 
     snapshot.forEach((docSnap) => {
@@ -178,7 +191,7 @@ export const fetchFirestoreBackups = async (): Promise<BackupSummary[]> => {
 export const restoreBackupFromFirestore = async (backupId: string): Promise<AppBackupData | null> => {
   try {
     const docRef = doc(db, 'backups', backupId);
-    const snap = await getDoc(docRef);
+    const snap = await withTimeout(getDoc(docRef), 6000);
     if (snap.exists()) {
       const data = snap.data();
       if (data.backupData) {
@@ -194,7 +207,7 @@ export const restoreBackupFromFirestore = async (backupId: string): Promise<AppB
     }
     return null;
   } catch (error) {
-    console.error('Failed to restore backup:', error);
+    console.warn('Failed to restore backup from Firestore, checking local fallback:', error);
     // Check local fallback
     try {
       const localData = localStorage.getItem(`school_backup_${backupId}`);

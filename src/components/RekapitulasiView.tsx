@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -19,26 +19,34 @@ import {
   AlertCircle,
   Sparkles,
   ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
   Layers,
   ExternalLink,
   Table,
+  Phone,
+  Send,
+  HardDrive,
 } from 'lucide-react';
-import { AttendanceRecord, SchoolClass, SchoolConfig } from '../types';
+import { AttendanceRecord, SchoolClass, SchoolConfig, Student, Teacher } from '../types';
 import { formatDateIndo } from '../utils/soundAndDate';
 import {
   pairAttendanceByDateAndPerson,
   downloadBkdCsvFile,
 } from '../utils/bkdTaliabuExport';
+import { PrintModal } from './PrintModal';
+import { BulkPrintModal } from './BulkPrintModal';
+import { autoNotifyAlpaOrLateRecords } from '../utils/whatsapp';
 
 interface RekapitulasiViewProps {
   records?: AttendanceRecord[];
   classes?: SchoolClass[];
   config: SchoolConfig;
-  onOpenPrintModal?: () => void;
+  onOpenPrintModal?: (customRecords?: AttendanceRecord[], dateLabel?: string) => void;
   onDeleteRecord?: (id: string) => void;
   todayDate?: string;
-  students?: any[];
-  teachers?: any[];
+  students?: Student[];
+  teachers?: Teacher[];
 }
 
 export const RekapitulasiView: React.FC<RekapitulasiViewProps> = ({
@@ -64,76 +72,181 @@ export const RekapitulasiView: React.FC<RekapitulasiViewProps> = ({
   const [selectedClass, setSelectedClass] = useState<string>('ALL');
   const [exportMode, setExportMode] = useState<'bkd_separate' | 'standard'>('bkd_separate');
 
-  // Filter calculation
-  const filteredRecords = safeRecords.filter((rec) => {
-    // 1. Search Query
-    const matchesSearch =
-      rec.personName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      rec.identifier.includes(searchQuery) ||
-      rec.classOrSubject.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (rec.note && rec.note.toLowerCase().includes(searchQuery.toLowerCase()));
+  // Sorting State - reactive across all fields
+  const [sortField, setSortField] = useState<'name' | 'time' | 'status' | 'category' | 'default'>('default');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
 
-    // 2. Date Filter
-    let matchesDate = true;
-    if (dateFilterMode === 'today') {
-      matchesDate = rec.date === todayStr;
-    } else if (dateFilterMode === '7days') {
-      const recDate = new Date(rec.date);
-      const now = new Date();
-      const diffTime = Math.abs(now.getTime() - recDate.getTime());
-      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-      matchesDate = diffDays <= 7;
-    } else if (dateFilterMode === 'month') {
-      const recMonth = rec.date.substring(0, 7);
-      const currentMonth = todayStr.substring(0, 7);
-      matchesDate = recMonth === currentMonth;
-    } else if (dateFilterMode === 'custom') {
-      matchesDate = rec.date >= startDate && rec.date <= endDate;
+  // Internal Print Modal & Notification State
+  const [isInternalPrintOpen, setIsInternalPrintOpen] = useState(false);
+  const [isBulkPrintOpen, setIsBulkPrintOpen] = useState(false);
+  const [waNotifMsg, setWaNotifMsg] = useState<string | null>(null);
+
+  // Filter calculation - memoized and instant
+  const filteredRecords = useMemo(() => {
+    return safeRecords.filter((rec) => {
+      // 1. Search Query
+      const matchesSearch =
+        rec.personName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        rec.identifier.includes(searchQuery) ||
+        rec.classOrSubject.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (rec.note && rec.note.toLowerCase().includes(searchQuery.toLowerCase()));
+
+      // 2. Date Filter
+      let matchesDate = true;
+      if (dateFilterMode === 'today') {
+        matchesDate = rec.date === todayStr;
+      } else if (dateFilterMode === '7days') {
+        const recDate = new Date(rec.date);
+        const now = new Date();
+        const diffTime = Math.abs(now.getTime() - recDate.getTime());
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        matchesDate = diffDays <= 7;
+      } else if (dateFilterMode === 'month') {
+        const recMonth = rec.date.substring(0, 7);
+        const currentMonth = todayStr.substring(0, 7);
+        matchesDate = recMonth === currentMonth;
+      } else if (dateFilterMode === 'custom') {
+        matchesDate = rec.date >= startDate && rec.date <= endDate;
+      }
+
+      // 3. Session Type
+      const matchesSession =
+        selectedSessionType === 'ALL' || rec.type === selectedSessionType;
+
+      // 4. Status Filter (Hadir, Terlambat, Izin, Sakit, Alpa)
+      const matchesStatus =
+        selectedStatus === 'ALL' || rec.status === selectedStatus;
+
+      // 5. Person & Employment Category
+      let matchesPerson = true;
+      if (selectedPersonType === 'student') {
+        matchesPerson = rec.personType === 'student';
+      } else if (selectedPersonType === 'teacher') {
+        matchesPerson = rec.personType === 'teacher';
+      } else if (selectedPersonType === 'PNS') {
+        matchesPerson = rec.employmentStatus === 'PNS';
+      } else if (selectedPersonType === 'PPPK') {
+        matchesPerson = rec.employmentStatus === 'PPPK';
+      } else if (selectedPersonType === 'PPPK_PW') {
+        matchesPerson = rec.employmentStatus === 'PPPK_PW';
+      } else if (selectedPersonType === 'HONORER') {
+        matchesPerson = rec.employmentStatus === 'HONORER' || rec.employmentStatus === 'GTT_PTT';
+      }
+
+      // 6. Class Filter
+      const matchesClass =
+        selectedClass === 'ALL' || rec.classOrSubject === selectedClass;
+
+      return (
+        matchesSearch &&
+        matchesDate &&
+        matchesSession &&
+        matchesStatus &&
+        matchesPerson &&
+        matchesClass
+      );
+    });
+  }, [
+    safeRecords,
+    searchQuery,
+    dateFilterMode,
+    todayStr,
+    startDate,
+    endDate,
+    selectedSessionType,
+    selectedStatus,
+    selectedPersonType,
+    selectedClass,
+  ]);
+
+  // Reactive sorted records - immediately reflected in table and exports
+  const displayRecords = useMemo(() => {
+    return [...filteredRecords].sort((a, b) => {
+      if (sortField === 'name') {
+        const cmp = a.personName.localeCompare(b.personName);
+        return sortDirection === 'asc' ? cmp : -cmp;
+      }
+      if (sortField === 'time') {
+        const cmp = `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`);
+        return sortDirection === 'asc' ? cmp : -cmp;
+      }
+      if (sortField === 'status') {
+        const cmp = a.status.localeCompare(b.status);
+        return sortDirection === 'asc' ? cmp : -cmp;
+      }
+      if (sortField === 'category') {
+        const catA = a.personType === 'teacher' ? (a.employmentStatus || 'Guru') : 'Siswa';
+        const catB = b.personType === 'teacher' ? (b.employmentStatus || 'Guru') : 'Siswa';
+        const cmp = catA.localeCompare(catB);
+        return sortDirection === 'asc' ? cmp : -cmp;
+      }
+      return 0;
+    });
+  }, [filteredRecords, sortField, sortDirection]);
+
+  const handleSort = (field: 'name' | 'time' | 'status' | 'category') => {
+    if (sortField === field) {
+      setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortField(field);
+      setSortDirection('asc');
     }
+  };
 
-    // 3. Session Type
-    const matchesSession =
-      selectedSessionType === 'ALL' || rec.type === selectedSessionType;
-
-    // 4. Status Filter (Hadir, Terlambat, Izin, Sakit, Alpa)
-    const matchesStatus =
-      selectedStatus === 'ALL' || rec.status === selectedStatus;
-
-    // 5. Person & Employment Category
-    let matchesPerson = true;
-    if (selectedPersonType === 'student') {
-      matchesPerson = rec.personType === 'student';
-    } else if (selectedPersonType === 'teacher') {
-      matchesPerson = rec.personType === 'teacher';
-    } else if (selectedPersonType === 'PNS') {
-      matchesPerson = rec.employmentStatus === 'PNS';
-    } else if (selectedPersonType === 'PPPK') {
-      matchesPerson = rec.employmentStatus === 'PPPK';
-    } else if (selectedPersonType === 'PPPK_PW') {
-      matchesPerson = rec.employmentStatus === 'PPPK_PW';
-    } else if (selectedPersonType === 'HONORER') {
-      matchesPerson = rec.employmentStatus === 'HONORER' || rec.employmentStatus === 'GTT_PTT';
-    }
-
-    // 6. Class Filter
-    const matchesClass =
-      selectedClass === 'ALL' || rec.classOrSubject === selectedClass;
-
-    return (
-      matchesSearch &&
-      matchesDate &&
-      matchesSession &&
-      matchesStatus &&
-      matchesPerson &&
-      matchesClass
-    );
-  });
+  // Human-readable date range label
+  const currentDateRangeLabel = useMemo(() => {
+    if (dateFilterMode === 'today') return `Hari Ini (${formatDateIndo(todayStr)})`;
+    if (dateFilterMode === '7days') return '7 Hari Terakhir';
+    if (dateFilterMode === 'month') return `Bulan Ini (${todayStr.substring(0, 7)})`;
+    if (dateFilterMode === 'custom') return `${startDate} s/d ${endDate}`;
+    return 'Semua Catatan Presensi';
+  }, [dateFilterMode, todayStr, startDate, endDate]);
 
   // Calculate Summary metrics for the filtered view
-  const countHadir = filteredRecords.filter((r) => r.status === 'hadir').length;
-  const countTerlambat = filteredRecords.filter((r) => r.status === 'terlambat').length;
-  const countIzinSakit = filteredRecords.filter((r) => r.status === 'izin' || r.status === 'sakit').length;
-  const countAlpa = filteredRecords.filter((r) => r.status === 'alpa').length;
+  const countHadir = displayRecords.filter((r) => r.status === 'hadir').length;
+  const countTerlambat = displayRecords.filter((r) => r.status === 'terlambat').length;
+  const countIzinSakit = displayRecords.filter((r) => r.status === 'izin' || r.status === 'sakit').length;
+  const countAlpa = displayRecords.filter((r) => r.status === 'alpa').length;
+
+  const handleOpenPrintDialog = () => {
+    if (onOpenPrintModal) {
+      onOpenPrintModal(displayRecords, currentDateRangeLabel);
+    } else {
+      setIsInternalPrintOpen(true);
+    }
+  };
+
+  const handleTriggerAlpaLateWhatsApp = () => {
+    const targetCount = countTerlambat + countAlpa;
+    if (targetCount === 0) {
+      setWaNotifMsg('Tidak ada siswa atau guru dengan status Alpa/Terlambat pada filter ini.');
+      setTimeout(() => setWaNotifMsg(null), 4000);
+      return;
+    }
+
+    const { notifiedCount } = autoNotifyAlpaOrLateRecords(
+      displayRecords,
+      config,
+      students,
+      teachers
+    );
+
+    setWaNotifMsg(
+      `Otomatis memicu notifikasi WhatsApp ke ${notifiedCount || targetCount} orang tua/personil untuk status Alpa/Terlambat.`
+    );
+    setTimeout(() => setWaNotifMsg(null), 6000);
+  };
+
+  const handleOpenBkdMediaChannels = () => {
+    if (config.bkdDriveUrl) {
+      window.open(config.bkdDriveUrl, '_blank');
+    }
+    const phone = config.bkdWhatsApp || '6282291882341';
+    const waUrl = `https://wa.me/${phone.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(
+      `Laporan Rekapitulasi Presensi ${config.schoolName} (${currentDateRangeLabel}): Hadir: ${countHadir}, Terlambat: ${countTerlambat}, Izin/Sakit: ${countIzinSakit}, Alpa: ${countAlpa}.`
+    )}`;
+    setTimeout(() => window.open(waUrl, '_blank'), 300);
+  };
 
   // Export to Excel (.xlsx) using SheetJS
   const handleExportExcel = () => {
@@ -352,9 +465,11 @@ export const RekapitulasiView: React.FC<RekapitulasiViewProps> = ({
       doc.text('Mengetahui,', 225, signY);
       doc.text('Kepala Sekolah SMPN 4 Satap Taliabu Barat', 225, signY + 4.5);
       doc.setFont('helvetica', 'bold');
-      doc.text(config.headmasterName, 225, signY + 20);
+      const pName = config.principalName || (config as any).headmasterName || 'La Ode Aliudin, S.Pd';
+      const pNip = config.principalNip || (config as any).headmasterNip || '197805122005011008';
+      doc.text(pName, 225, signY + 20);
       doc.setFont('helvetica', 'normal');
-      doc.text(`NIP. ${config.headmasterNip}`, 225, signY + 24);
+      doc.text(`NIP. ${pNip}`, 225, signY + 24);
     }
 
     const cleanSchoolName = config.schoolName.replace(/[^a-zA-Z0-9]/g, '_');
@@ -432,16 +547,16 @@ export const RekapitulasiView: React.FC<RekapitulasiViewProps> = ({
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 max-w-full overflow-hidden">
       {/* Header Bar */}
-      <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 bg-white p-5 lg:p-6 rounded-3xl border border-slate-200 shadow-xs">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-white p-4 sm:p-5 lg:p-6 rounded-3xl border border-slate-200 shadow-xs">
         <div>
           <div className="flex items-center space-x-2.5">
-            <div className="w-10 h-10 rounded-2xl bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold">
+            <div className="w-10 h-10 rounded-2xl bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold shrink-0">
               <FileSpreadsheet className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">
+              <h2 className="text-lg sm:text-xl font-extrabold text-slate-900 tracking-tight">
                 Rekapitulasi & Log Presensi Digital
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
@@ -451,9 +566,9 @@ export const RekapitulasiView: React.FC<RekapitulasiViewProps> = ({
           </div>
         </div>
 
-        <div className="flex items-center space-x-2 flex-wrap gap-y-2">
+        <div className="flex items-center flex-wrap gap-2">
           {/* Export Mode Toggle */}
-          <div className="flex items-center space-x-1 bg-slate-100 p-1 rounded-2xl text-[11px] font-bold">
+          <div className="flex items-center space-x-1 bg-slate-100 p-1 rounded-2xl text-[11px] font-bold shrink-0">
             <button
               onClick={() => setExportMode('bkd_separate')}
               className={`px-2.5 py-1.5 rounded-xl transition-all cursor-pointer ${
@@ -476,53 +591,99 @@ export const RekapitulasiView: React.FC<RekapitulasiViewProps> = ({
             </button>
           </div>
 
+          {/* Bulk Print Multi-Tanggal */}
+          <button
+            onClick={() => setIsBulkPrintOpen(true)}
+            className="px-3.5 py-2 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white rounded-2xl text-xs font-bold flex items-center space-x-1.5 transition-all cursor-pointer shadow-md shadow-indigo-600/20"
+            title="Pilih beberapa tanggal sekaligus dan cetak laporan PDF rekap gabungan dengan window.print()"
+          >
+            <Printer className="w-4 h-4" />
+            <span>Bulk Print Multi-Tanggal</span>
+          </button>
+
+          {/* Cetak / Ekspor PDF Berita Acara (Uses PrintModal for full custom date range) */}
+          <button
+            onClick={handleOpenPrintDialog}
+            className="px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-2xl text-xs font-bold flex items-center space-x-1.5 transition-all cursor-pointer"
+            title="Buka Dokumen Berita Acara Presensi siap cetak / PDF sesuai filter"
+          >
+            <Printer className="w-4 h-4 text-indigo-600" />
+            <span>Berita Acara</span>
+          </button>
+
           {/* Export Excel Button */}
           <button
             id="export-excel-btn"
             onClick={handleExportExcel}
-            className="px-3.5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl text-xs font-bold flex items-center space-x-1.5 transition-all cursor-pointer shadow-md shadow-emerald-600/20"
+            className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl text-xs font-bold flex items-center space-x-1.5 transition-all cursor-pointer shadow-md shadow-emerald-600/20"
             title="Unduh format spreadsheet Microsoft Excel (.xlsx) dengan kop surat dan ringkasan"
           >
             <Table className="w-4 h-4" />
-            <span>Ekspor Excel (.xlsx)</span>
+            <span>Ekspor Excel</span>
           </button>
 
           {/* Export PDF Button */}
           <button
             id="export-pdf-btn"
             onClick={handleExportPDF}
-            className="px-3.5 py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-2xl text-xs font-bold flex items-center space-x-1.5 transition-all cursor-pointer shadow-md shadow-rose-600/20"
+            className="px-3.5 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-2xl text-xs font-bold flex items-center space-x-1.5 transition-all cursor-pointer shadow-md shadow-rose-600/20"
             title="Unduh dokumen resmi PDF ber-kop surat Dinas Pendidikan & TTD Kepala Sekolah"
           >
             <FileText className="w-4 h-4" />
-            <span>Ekspor PDF (.pdf)</span>
+            <span>Ekspor PDF Langsung</span>
           </button>
 
           {/* Export CSV Button */}
           <button
             onClick={handleExportCSV}
-            className="px-3.5 py-2.5 bg-slate-800 hover:bg-slate-900 text-white rounded-2xl text-xs font-bold flex items-center space-x-1.5 transition-all cursor-pointer shadow-xs"
+            className="px-3.5 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-2xl text-xs font-bold flex items-center space-x-1.5 transition-all cursor-pointer shadow-xs"
           >
             <Download className="w-4 h-4" />
             <span>CSV {exportMode === 'bkd_separate' ? 'BKD' : ''}</span>
           </button>
 
-          {onOpenPrintModal && (
-            <button
-              onClick={onOpenPrintModal}
-              className="px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-2xl text-xs font-bold flex items-center space-x-1.5 transition-colors cursor-pointer"
-            >
-              <Printer className="w-4 h-4 text-slate-600" />
-              <span>Cetak Berita Acara</span>
-            </button>
-          )}
+          {/* Kirim Notifikasi WA Alpa / Terlambat Button */}
+          <button
+            onClick={handleTriggerAlpaLateWhatsApp}
+            className="px-3.5 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-2xl text-xs font-bold flex items-center space-x-1.5 transition-all cursor-pointer shadow-xs"
+            title="Kirim pesan peringatan WhatsApp otomatis untuk siswa/guru berstatus Alpa atau Terlambat"
+          >
+            <Phone className="w-4 h-4" />
+            <span>Notif WA Alpa & Terlambat ({countTerlambat + countAlpa})</span>
+          </button>
+
+          {/* Media BKD Fast Trigger */}
+          <button
+            onClick={handleOpenBkdMediaChannels}
+            className="px-3.5 py-2 bg-purple-50 hover:bg-purple-100 text-purple-900 border border-purple-200 rounded-2xl text-xs font-bold flex items-center space-x-1.5 transition-all cursor-pointer"
+            title="Buka Folder Drive & WhatsApp Integrasi BKD"
+          >
+            <HardDrive className="w-4 h-4 text-purple-600" />
+            <span>Media BKD</span>
+          </button>
         </div>
       </div>
 
+      {/* WA Notification Feedback Banner */}
+      {waNotifMsg && (
+        <div className="bg-amber-50 border border-amber-200 text-amber-900 p-3.5 rounded-2xl text-xs font-semibold flex items-center justify-between shadow-xs animate-in fade-in">
+          <div className="flex items-center space-x-2">
+            <Phone className="w-4 h-4 text-amber-600 shrink-0" />
+            <span>{waNotifMsg}</span>
+          </div>
+          <button
+            onClick={() => setWaNotifMsg(null)}
+            className="text-amber-700 hover:text-amber-900 font-bold px-2 py-0.5"
+          >
+            Tutup
+          </button>
+        </div>
+      )}
+
       {/* Filter Matrix Card */}
-      <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs space-y-4">
+      <div className="bg-white p-4 sm:p-5 rounded-3xl border border-slate-200 shadow-xs space-y-4">
         {/* Row 1: Search & Quick Date Presets */}
-        <div className="flex flex-col lg:flex-row gap-3 items-center justify-between">
+        <div className="flex flex-col lg:flex-row gap-3 items-stretch lg:items-center justify-between">
           <div className="relative w-full lg:w-96">
             <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
             <input
@@ -535,7 +696,7 @@ export const RekapitulasiView: React.FC<RekapitulasiViewProps> = ({
           </div>
 
           {/* Quick Date Presets */}
-          <div className="flex items-center space-x-1.5 overflow-x-auto w-full lg:w-auto pb-1 lg:pb-0">
+          <div className="flex items-center flex-wrap gap-1.5 w-full lg:w-auto">
             <span className="text-[11px] font-bold text-slate-400 mr-1 hidden sm:inline">
               Rentang:
             </span>
@@ -549,10 +710,10 @@ export const RekapitulasiView: React.FC<RekapitulasiViewProps> = ({
               <button
                 key={p.id}
                 onClick={() => setDateFilterMode(p.id as any)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                   dateFilterMode === p.id
-                    ? 'bg-slate-900 text-white shadow-xs'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    ? 'bg-indigo-600 text-white shadow-xs'
+                    : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
                 }`}
               >
                 {p.label}
@@ -679,24 +840,98 @@ export const RekapitulasiView: React.FC<RekapitulasiViewProps> = ({
         </div>
       </div>
 
-      {/* Main Table */}
+      {/* Main Table with Reactive Column Sorting */}
       <div className="bg-white rounded-3xl border border-slate-200 shadow-xs overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead>
               <tr className="bg-slate-50/80 border-b border-slate-200/80 text-slate-500 font-extrabold uppercase tracking-wider">
-                <th className="py-3.5 pl-5">Personil & NIP/NISN</th>
-                <th className="py-3.5">Kategori</th>
+                {/* Personil Sort */}
+                <th
+                  onClick={() => handleSort('name')}
+                  className="py-3.5 pl-5 cursor-pointer select-none hover:text-indigo-600 transition-colors group"
+                >
+                  <div className="flex items-center space-x-1.5">
+                    <span>Personil & NIP/NISN</span>
+                    {sortField === 'name' ? (
+                      sortDirection === 'asc' ? (
+                        <ArrowUp className="w-3.5 h-3.5 text-indigo-600 font-bold" />
+                      ) : (
+                        <ArrowDown className="w-3.5 h-3.5 text-indigo-600 font-bold" />
+                      )
+                    ) : (
+                      <ArrowUpDown className="w-3 h-3 text-slate-300 group-hover:text-slate-500" />
+                    )}
+                  </div>
+                </th>
+
+                {/* Kategori Sort */}
+                <th
+                  onClick={() => handleSort('category')}
+                  className="py-3.5 cursor-pointer select-none hover:text-indigo-600 transition-colors group"
+                >
+                  <div className="flex items-center space-x-1.5">
+                    <span>Kategori</span>
+                    {sortField === 'category' ? (
+                      sortDirection === 'asc' ? (
+                        <ArrowUp className="w-3.5 h-3.5 text-indigo-600" />
+                      ) : (
+                        <ArrowDown className="w-3.5 h-3.5 text-indigo-600" />
+                      )
+                    ) : (
+                      <ArrowUpDown className="w-3 h-3 text-slate-300 group-hover:text-slate-500" />
+                    )}
+                  </div>
+                </th>
+
                 <th className="py-3.5">Rombel / Jabatan</th>
-                <th className="py-3.5">Tanggal & Jam</th>
+
+                {/* Tanggal & Jam Sort */}
+                <th
+                  onClick={() => handleSort('time')}
+                  className="py-3.5 cursor-pointer select-none hover:text-indigo-600 transition-colors group"
+                >
+                  <div className="flex items-center space-x-1.5">
+                    <span>Tanggal & Jam</span>
+                    {sortField === 'time' ? (
+                      sortDirection === 'asc' ? (
+                        <ArrowUp className="w-3.5 h-3.5 text-indigo-600" />
+                      ) : (
+                        <ArrowDown className="w-3.5 h-3.5 text-indigo-600" />
+                      )
+                    ) : (
+                      <ArrowUpDown className="w-3 h-3 text-slate-300 group-hover:text-slate-500" />
+                    )}
+                  </div>
+                </th>
+
                 <th className="py-3.5">Sesi</th>
-                <th className="py-3.5">Status</th>
+
+                {/* Status Sort */}
+                <th
+                  onClick={() => handleSort('status')}
+                  className="py-3.5 cursor-pointer select-none hover:text-indigo-600 transition-colors group"
+                >
+                  <div className="flex items-center space-x-1.5">
+                    <span>Status</span>
+                    {sortField === 'status' ? (
+                      sortDirection === 'asc' ? (
+                        <ArrowUp className="w-3.5 h-3.5 text-indigo-600" />
+                      ) : (
+                        <ArrowDown className="w-3.5 h-3.5 text-indigo-600" />
+                      )
+                    ) : (
+                      <ArrowUpDown className="w-3 h-3 text-slate-300 group-hover:text-slate-500" />
+                    )}
+                  </div>
+                </th>
+
                 <th className="py-3.5">Metode & Lokasi</th>
                 <th className="py-3.5 pr-5">Catatan</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filteredRecords.map((rec) => (
+              {displayRecords.map((rec) => (
                 <tr key={rec.id} className="hover:bg-slate-50/60 transition-colors">
                   <td className="py-3.5 pl-5">
                     <div className="font-bold text-slate-900 text-xs">{rec.personName}</div>
@@ -767,7 +1002,7 @@ export const RekapitulasiView: React.FC<RekapitulasiViewProps> = ({
           </table>
         </div>
 
-        {filteredRecords.length === 0 && (
+        {displayRecords.length === 0 && (
           <div className="p-12 text-center text-slate-400">
             <FileSpreadsheet className="w-10 h-10 mx-auto mb-3 text-slate-300" />
             <p className="text-sm font-bold text-slate-700">Tidak ada rekaman presensi yang cocok</p>
@@ -777,6 +1012,30 @@ export const RekapitulasiView: React.FC<RekapitulasiViewProps> = ({
           </div>
         )}
       </div>
+
+      {/* Bulk Print Modal for Multi-Date Selection */}
+      <BulkPrintModal
+        isOpen={isBulkPrintOpen}
+        onClose={() => setIsBulkPrintOpen(false)}
+        records={safeRecords}
+        config={config}
+        students={students}
+        teachers={teachers}
+      />
+
+      {/* Embedded Print & Export Modal with exact filtered/sorted data */}
+      {isInternalPrintOpen && (
+        <PrintModal
+          onClose={() => setIsInternalPrintOpen(false)}
+          config={config}
+          records={displayRecords}
+          students={students}
+          teachers={teachers}
+          todayDate={todayStr}
+          dateRangeLabel={currentDateRangeLabel}
+          customTitle="BERITA ACARA REKAPITULASI PRESENSI"
+        />
+      )}
     </div>
   );
 };

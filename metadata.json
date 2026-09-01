@@ -1,5 +1,5 @@
 {
-  "name": "Remix Presensi Sekolah Digital",
+  "name": "Presensi SMPN 4 Satap Taliabu Barat",
   "description": "Sistem informasi presensi biometrik digital & portal perizinan resmi SMP Negeri 4 Satu Atap Taliabu Barat (Desa Pancoran, Kec. Taliabu Barat, Kab. Pulau Taliabu, Maluku Utara).",
   "requestFramePermissions": [
     "camera",

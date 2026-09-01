@@ -85,3 +85,69 @@ export const sendWhatsAppNotification = (phone: string, text: string): void => {
   const url = createWhatsAppUrl(phone, text);
   window.open(url, '_blank');
 };
+
+/**
+ * Automatically trigger a WhatsApp notification when a student or teacher
+ * is marked as 'alpa' or 'terlambat' in attendance records.
+ */
+export const notifyAbsenceOrLateViaWhatsApp = (
+  record: AttendanceRecord,
+  config: SchoolConfig,
+  targetPerson?: Student | Teacher
+): boolean => {
+  if (record.status !== 'alpa' && record.status !== 'terlambat') {
+    return false;
+  }
+
+  let phone = '';
+  if (targetPerson) {
+    if ('parentPhone' in targetPerson && targetPerson.parentPhone) {
+      phone = targetPerson.parentPhone;
+    } else if ('phone' in targetPerson && targetPerson.phone) {
+      phone = targetPerson.phone;
+    }
+  }
+
+  if (!phone) {
+    phone = config.bkdWhatsApp || '6282291882341';
+  }
+
+  const message = generateAttendanceWhatsAppMessage(record, config, targetPerson);
+  sendWhatsAppNotification(phone, message);
+  return true;
+};
+
+/**
+ * Batch utility to notify multiple alpa/terlambat attendees
+ */
+export const autoNotifyAlpaOrLateRecords = (
+  records: AttendanceRecord[],
+  config: SchoolConfig,
+  students: Student[] = [],
+  teachers: Teacher[] = []
+): { notifiedCount: number; failedCount: number } => {
+  const targetRecords = records.filter(
+    (r) => r.status === 'alpa' || r.status === 'terlambat'
+  );
+
+  let notifiedCount = 0;
+  let failedCount = 0;
+
+  targetRecords.forEach((rec) => {
+    let person: Student | Teacher | undefined;
+    if (rec.personType === 'student') {
+      person = students.find((s) => s.id === rec.personId || s.nisn === rec.identifier);
+    } else {
+      person = teachers.find((t) => t.id === rec.personId || t.nip === rec.identifier);
+    }
+
+    try {
+      const success = notifyAbsenceOrLateViaWhatsApp(rec, config, person);
+      if (success) notifiedCount++;
+    } catch {
+      failedCount++;
+    }
+  });
+
+  return { notifiedCount, failedCount };
+};

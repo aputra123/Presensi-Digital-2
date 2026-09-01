@@ -1,4 +1,4 @@
-export type UserRole = 'admin' | 'piket';
+export type UserRole = 'admin' | 'kepala_sekolah' | 'teacher' | 'bkd_staff' | 'piket' | 'bkd';
 
 export type EmploymentStatus = 'PNS' | 'PPPK' | 'PPPK_PW' | 'HONORER' | 'GTT_PTT';
 
@@ -164,6 +164,7 @@ export interface SchoolConfig {
   maxRadiusMeters: number;
   bkdEmail?: string;
   bkdWhatsApp?: string;
+  bkdDriveUrl?: string;
   principalName?: string;
   principalNip?: string;
   adminName?: string;
@@ -175,6 +176,7 @@ export type ActivityLogCategory =
   | 'leave'
   | 'master_data'
   | 'config'
+  | 'bkd_automation'
   | 'workspace'
   | 'auth'
   | 'system';
@@ -209,16 +211,25 @@ export interface BiometricLog {
   personType: 'student' | 'teacher';
   classOrSubject: string;
   status: 'verified' | 'failed' | 'flagged';
+  severity?: 'info' | 'warning' | 'error';
   matchScore: number; // 0 - 100%
   threshold: number; // e.g. 80%
   livenessPassed: boolean;
   gpsPassed: boolean;
   distanceMeter: number;
+  latitude?: number;
+  longitude?: number;
   cameraFacing: 'user' | 'environment';
   deviceId?: string;
   failureReason?: string; // e.g., "Skor kemiripan 64% di bawah ambang batas (80%)"
   photoThumbnail?: string;
   ipOrDevice?: string;
+  ipAddress?: string;
+  userAgent?: string;
+  archived?: boolean;
+  isSuspicious?: boolean;
+  suspiciousReason?: string;
+  suspiciousGroupId?: string;
 }
 
 export interface AppBackupData {

@@ -1,29 +1,10 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react';
-import {
-  APIProvider,
-  Map,
-  AdvancedMarker,
-  Pin,
-  InfoWindow,
-  useMap,
-  useMapsLibrary,
-  useApiLoadingStatus,
-  APILoadingStatus,
-} from '@vis.gl/react-google-maps';
+import L from 'leaflet';
 import {
   MapPin,
-  Navigation,
   School,
-  AlertCircle,
   LocateFixed,
-  ExternalLink,
-  ShieldCheck,
-  Compass,
-  Layers,
 } from 'lucide-react';
-
-const GOOGLE_MAPS_API_KEY =
-  ((import.meta as unknown as { env?: Record<string, string> }).env?.VITE_GOOGLE_MAPS_API_KEY as string) || '';
 
 export interface LocationCoordinates {
   lat: number;
@@ -52,43 +33,7 @@ export function calculateDistanceMeters(
   return Math.round(R * c);
 }
 
-interface GeofenceCircleProps {
-  center: { lat: number; lng: number };
-  radius: number;
-  isInRadius?: boolean;
-}
-
-const GeofenceCircle: React.FC<GeofenceCircleProps> = ({ center, radius, isInRadius = true }) => {
-  const map = useMap();
-  const mapsLib = useMapsLibrary('maps');
-
-  useEffect(() => {
-    if (!map || !mapsLib || !window.google?.maps?.Circle) return;
-
-    const strokeColor = isInRadius ? '#059669' : '#DC2626';
-    const fillColor = isInRadius ? '#10B981' : '#EF4444';
-
-    const circle = new window.google.maps.Circle({
-      strokeColor,
-      strokeOpacity: 0.8,
-      strokeWeight: 2,
-      fillColor,
-      fillOpacity: 0.18,
-      map,
-      center,
-      radius,
-      clickable: false,
-    });
-
-    return () => {
-      circle.setMap(null);
-    };
-  }, [map, mapsLib, center.lat, center.lng, radius, isInRadius]);
-
-  return null;
-};
-
-interface GoogleMapsGeofenceProps {
+export interface GoogleMapsGeofenceProps {
   schoolLocation: { lat: number; lng: number; name?: string };
   userLocation?: { lat: number; lng: number; address?: string };
   radiusMeters: number;
@@ -99,156 +44,7 @@ interface GoogleMapsGeofenceProps {
   onDistanceCalculated?: (distanceMeters: number, isInRadius: boolean) => void;
 }
 
-// Standalone Interactive Geofence Canvas (Zero-dependency fallback if Maps API is not loaded/activated)
-const RadarGeofenceFallback: React.FC<GoogleMapsGeofenceProps & { errorMessage?: string }> = ({
-  schoolLocation,
-  userLocation,
-  radiusMeters,
-  isInteractive,
-  onLocationChange,
-  height = '280px',
-  showUserMarker = true,
-  errorMessage,
-}) => {
-  const distance = useMemo(() => {
-    if (!userLocation) return 0;
-    return calculateDistanceMeters(
-      schoolLocation.lat,
-      schoolLocation.lng,
-      userLocation.lat,
-      userLocation.lng
-    );
-  }, [schoolLocation, userLocation]);
-
-  const isInRadius = distance <= radiusMeters;
-  const canvasRef = useRef<HTMLDivElement>(null);
-
-  const handleCanvasClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!isInteractive || !onLocationChange || !canvasRef.current) return;
-    const rect = canvasRef.current.getBoundingClientRect();
-    const x = e.clientX - rect.left - rect.width / 2;
-    const y = e.clientY - rect.top - rect.height / 2;
-
-    // Convert pixel offset to lat/lng delta (approximate scale)
-    const metersPerPixel = (radiusMeters * 2.5) / rect.width;
-    const deltaMetersLng = x * metersPerPixel;
-    const deltaMetersLat = -y * metersPerPixel;
-
-    const deltaLat = deltaMetersLat / 111111;
-    const deltaLng = deltaMetersLng / (111111 * Math.cos((schoolLocation.lat * Math.PI) / 180));
-
-    onLocationChange({
-      lat: schoolLocation.lat + deltaLat,
-      lng: schoolLocation.lng + deltaLng,
-    });
-  };
-
-  return (
-    <div
-      ref={canvasRef}
-      onClick={handleCanvasClick}
-      className={`relative rounded-2xl overflow-hidden border border-slate-200 bg-slate-900 text-white flex flex-col justify-between select-none ${
-        isInteractive ? 'cursor-crosshair' : ''
-      }`}
-      style={{ height }}
-    >
-      {/* Background Radar Grid */}
-      <div className="absolute inset-0 opacity-20 pointer-events-none bg-[radial-gradient(#6366f1_1px,transparent_1px)] [background-size:16px_16px]" />
-
-      {/* Geofence Circles */}
-      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-        {/* Outer Zone Circle */}
-        <div
-          className={`rounded-full border border-dashed transition-all ${
-            isInRadius ? 'border-emerald-500/50 bg-emerald-500/10' : 'border-rose-500/50 bg-rose-500/10'
-          }`}
-          style={{ width: '65%', height: '65%' }}
-        />
-        {/* Inner Safe Ring */}
-        <div
-          className={`absolute rounded-full border ${
-            isInRadius ? 'border-emerald-400/80 bg-emerald-400/5' : 'border-rose-400/80'
-          }`}
-          style={{ width: '45%', height: '45%' }}
-        />
-        {/* Radar Center Pulse */}
-        <div className="absolute w-4 h-4 rounded-full bg-indigo-500/40 animate-ping" />
-      </div>
-
-      {/* Top Status Bar */}
-      <div className="relative z-10 p-3 flex items-center justify-between text-xs">
-        <div className="bg-slate-800/90 backdrop-blur-md px-3 py-1.5 rounded-xl border border-slate-700 shadow-md flex items-center space-x-2">
-          <div className={`w-2.5 h-2.5 rounded-full ${isInRadius ? 'bg-emerald-400 animate-pulse' : 'bg-rose-500'}`} />
-          <span className="font-bold">
-            {isInRadius ? 'Dalam Radius Sekolah' : 'Di Luar Radius Sekolah'}
-          </span>
-          <span className="text-slate-400 font-mono text-[11px]">
-            ({distance}m / maks {radiusMeters}m)
-          </span>
-        </div>
-
-        <div className="bg-slate-800/90 backdrop-blur-md px-2.5 py-1 rounded-xl border border-slate-700 text-[10px] text-indigo-300 font-mono flex items-center space-x-1">
-          <Compass className="w-3 h-3 text-indigo-400" />
-          <span>Radar Geofence Live</span>
-        </div>
-      </div>
-
-      {/* Center Marker: School */}
-      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-10 flex flex-col items-center pointer-events-none">
-        <div className="p-2 rounded-full bg-indigo-600 shadow-lg border-2 border-white flex items-center justify-center">
-          <School className="w-4 h-4 text-white" />
-        </div>
-        <span className="mt-1 px-2 py-0.5 rounded-md bg-slate-950/80 text-[10px] font-bold text-indigo-200 border border-indigo-800 whitespace-nowrap">
-          {schoolLocation.name || 'Pusat Sekolah'}
-        </span>
-      </div>
-
-      {/* User Location Marker relative offset */}
-      {showUserMarker && userLocation && (
-        <div
-          className="absolute z-20 flex flex-col items-center pointer-events-none transition-all duration-500"
-          style={{
-            top: isInRadius ? '42%' : '20%',
-            left: isInRadius ? '58%' : '80%',
-          }}
-        >
-          <div className="relative flex items-center justify-center">
-            <div className={`absolute -inset-2 rounded-full opacity-60 animate-ping ${isInRadius ? 'bg-emerald-400' : 'bg-rose-500'}`} />
-            <div className={`p-1.5 rounded-full shadow-lg border-2 border-white ${isInRadius ? 'bg-emerald-500' : 'bg-rose-600'}`}>
-              <Navigation className="w-3.5 h-3.5 text-white" />
-            </div>
-          </div>
-          <span className={`mt-1 px-2 py-0.5 rounded-md text-[9px] font-bold whitespace-nowrap border ${
-            isInRadius
-              ? 'bg-emerald-950/90 text-emerald-300 border-emerald-700'
-              : 'bg-rose-950/90 text-rose-300 border-rose-700'
-          }`}>
-            Posisi Anda ({distance}m)
-          </span>
-        </div>
-      )}
-
-      {/* Bottom Footer Details */}
-      <div className="relative z-10 p-2.5 bg-slate-950/80 backdrop-blur-md border-t border-slate-800 text-[11px] flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center space-x-1.5 text-slate-300 font-mono text-[10px]">
-          <MapPin className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
-          <span>
-            {schoolLocation.lat.toFixed(6)}, {schoolLocation.lng.toFixed(6)} (Radius {radiusMeters}m)
-          </span>
-        </div>
-
-        {errorMessage && (
-          <span className="text-[10px] text-amber-300 bg-amber-950/60 px-2 py-0.5 rounded border border-amber-800/80">
-            {errorMessage}
-          </span>
-        )}
-      </div>
-    </div>
-  );
-};
-
-// Inner Google Maps View
-const InnerGoogleMapView: React.FC<GoogleMapsGeofenceProps> = ({
+export const GoogleMapsGeofence: React.FC<GoogleMapsGeofenceProps> = ({
   schoolLocation,
   userLocation,
   radiusMeters,
@@ -256,50 +52,272 @@ const InnerGoogleMapView: React.FC<GoogleMapsGeofenceProps> = ({
   onLocationChange,
   height = '320px',
   showUserMarker = true,
+  onDistanceCalculated,
 }) => {
-  const [selectedMarker, setSelectedMarker] = useState<'school' | 'user' | null>(null);
-  const [mapType, setMapType] = useState<'roadmap' | 'satellite' | 'hybrid'>('roadmap');
+  const mapContainerRef = useRef<HTMLDivElement>(null);
+  const mapInstanceRef = useRef<L.Map | null>(null);
+  const tileLayerRef = useRef<L.TileLayer | null>(null);
+  const layersGroupRef = useRef<L.LayerGroup | null>(null);
+  const resizeTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const onLocationChangeRef = useRef(onLocationChange);
+  const onDistanceCalculatedRef = useRef(onDistanceCalculated);
+  
+  onLocationChangeRef.current = onLocationChange;
+  onDistanceCalculatedRef.current = onDistanceCalculated;
+
+  const [mapType, setMapType] = useState<'street' | 'satellite'>('street');
+
+  const safeRadius = Math.max(1, Number(radiusMeters) || 80);
+  const safeSchoolLat =
+    typeof schoolLocation?.lat === 'number' && !isNaN(schoolLocation.lat)
+      ? schoolLocation.lat
+      : -1.8682;
+  const safeSchoolLng =
+    typeof schoolLocation?.lng === 'number' && !isNaN(schoolLocation.lng)
+      ? schoolLocation.lng
+      : 124.4172;
 
   const distance = useMemo(() => {
-    if (!userLocation) return 0;
+    if (!userLocation || typeof userLocation.lat !== 'number' || typeof userLocation.lng !== 'number' || isNaN(userLocation.lat) || isNaN(userLocation.lng)) {
+      return 0;
+    }
     return calculateDistanceMeters(
-      schoolLocation.lat,
-      schoolLocation.lng,
+      safeSchoolLat,
+      safeSchoolLng,
       userLocation.lat,
       userLocation.lng
     );
-  }, [schoolLocation, userLocation]);
+  }, [safeSchoolLat, safeSchoolLng, userLocation?.lat, userLocation?.lng]);
 
-  const isInRadius = distance <= radiusMeters;
+  const isInRadius = distance <= safeRadius;
 
-  const mapCenter = useMemo(() => {
-    if (userLocation && showUserMarker) {
-      return {
-        lat: (schoolLocation.lat + userLocation.lat) / 2,
-        lng: (schoolLocation.lng + userLocation.lng) / 2,
-      };
+  // Notify distance calculation safely
+  useEffect(() => {
+    if (userLocation && onDistanceCalculatedRef.current) {
+      onDistanceCalculatedRef.current(distance, isInRadius);
     }
-    return { lat: schoolLocation.lat, lng: schoolLocation.lng };
-  }, [schoolLocation, userLocation, showUserMarker]);
+  }, [distance, isInRadius, userLocation?.lat, userLocation?.lng]);
 
-  const handleMapClick = (e: google.maps.MapMouseEvent) => {
-    if (!isInteractive || !onLocationChange || !e.latLng) return;
-    onLocationChange({
-      lat: e.latLng.lat(),
-      lng: e.latLng.lng(),
-    });
-  };
+  // Initialize Map Once on mount
+  useEffect(() => {
+    if (!mapContainerRef.current) return;
+
+    // Prevent double initialization if container already has a map
+    if ((mapContainerRef.current as unknown as { _leaflet_id?: number })._leaflet_id) {
+      return;
+    }
+
+    try {
+      const map = L.map(mapContainerRef.current, {
+        zoomControl: true,
+        attributionControl: false,
+      }).setView([safeSchoolLat, safeSchoolLng], 17);
+
+      mapInstanceRef.current = map;
+
+      const tileUrl =
+        mapType === 'satellite'
+          ? 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
+          : 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+
+      const tileLayer = L.tileLayer(tileUrl, { maxZoom: 19 }).addTo(map);
+      tileLayerRef.current = tileLayer;
+
+      const layersGroup = L.layerGroup().addTo(map);
+      layersGroupRef.current = layersGroup;
+
+      map.on('click', (e: L.LeafletMouseEvent) => {
+        if (onLocationChangeRef.current) {
+          onLocationChangeRef.current({
+            lat: e.latlng.lat,
+            lng: e.latlng.lng,
+          });
+        }
+      });
+
+      resizeTimerRef.current = setTimeout(() => {
+        if (mapInstanceRef.current && (mapInstanceRef.current as unknown as { _mapPane?: HTMLElement })._mapPane) {
+          try {
+            map.invalidateSize();
+          } catch {
+            // ignore
+          }
+        }
+      }, 200);
+    } catch (err) {
+      console.warn('Failed to initialize Leaflet map:', err);
+    }
+
+    return () => {
+      if (resizeTimerRef.current) {
+        clearTimeout(resizeTimerRef.current);
+        resizeTimerRef.current = null;
+      }
+      if (mapInstanceRef.current) {
+        try {
+          mapInstanceRef.current.remove();
+        } catch {
+          // ignore
+        }
+        mapInstanceRef.current = null;
+      }
+      layersGroupRef.current = null;
+      tileLayerRef.current = null;
+    };
+  }, []); // Run once on mount
+
+  // Update Tile Layer when mapType changes
+  useEffect(() => {
+    if (!tileLayerRef.current) return;
+    const tileUrl =
+      mapType === 'satellite'
+        ? 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
+        : 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+    tileLayerRef.current.setUrl(tileUrl);
+  }, [mapType]);
+
+  // Update Markers, Circles, and Bounds when locations/radius change
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    const layersGroup = layersGroupRef.current;
+    if (!map || !layersGroup || !(map as unknown as { _mapPane?: HTMLElement })._mapPane) return;
+
+    try {
+      layersGroup.clearLayers();
+
+      // School Icon
+      const schoolIcon = L.divIcon({
+        className: 'custom-school-pin',
+        html: `
+          <div style="
+            background: #4f46e5;
+            color: white;
+            width: 34px;
+            height: 34px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 4px 14px rgba(79, 70, 229, 0.5);
+            border: 2px solid white;
+            font-size: 16px;
+          ">🏫</div>
+        `,
+        iconSize: [34, 34],
+        iconAnchor: [17, 17],
+      });
+
+      const schoolMarker = L.marker([safeSchoolLat, safeSchoolLng], {
+        icon: schoolIcon,
+      });
+
+      schoolMarker.bindPopup(`
+        <div style="font-family: sans-serif; padding: 2px; font-size: 12px;">
+          <strong style="color: #4338ca; font-size: 13px;">${schoolLocation?.name || 'Pusat Sekolah'}</strong><br/>
+          <span style="color: #6b7280; font-size: 11px;">Titik Pusat Geofence Resmi</span><br/>
+          <div style="margin-top: 4px; background: #e0e7ff; color: #3730a3; padding: 2px 6px; border-radius: 4px; font-weight: bold; font-size: 10px; display: inline-block;">
+            Radius: ${safeRadius} Meter
+          </div>
+        </div>
+      `);
+
+      layersGroup.addLayer(schoolMarker);
+
+      // Geofence Circle
+      const circleColor = isInRadius ? '#059669' : '#dc2626';
+      const circleFill = isInRadius ? '#10b981' : '#ef4444';
+
+      const circle = L.circle([safeSchoolLat, safeSchoolLng], {
+        color: circleColor,
+        fillColor: circleFill,
+        fillOpacity: 0.18,
+        radius: safeRadius,
+        weight: 2,
+        dashArray: '5, 5',
+      });
+
+      layersGroup.addLayer(circle);
+
+      // User Marker
+      if (showUserMarker && userLocation && typeof userLocation.lat === 'number' && typeof userLocation.lng === 'number' && !isNaN(userLocation.lat) && !isNaN(userLocation.lng)) {
+        const userIcon = L.divIcon({
+          className: 'custom-user-pin',
+          html: `
+            <div style="
+              background: ${isInRadius ? '#10b981' : '#ef4444'};
+              color: white;
+              width: 32px;
+              height: 32px;
+              border-radius: 50%;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              box-shadow: 0 4px 14px ${isInRadius ? 'rgba(16, 185, 129, 0.5)' : 'rgba(239, 68, 68, 0.5)'};
+              border: 2px solid white;
+              font-size: 15px;
+            ">📍</div>
+          `,
+          iconSize: [32, 32],
+          iconAnchor: [16, 16],
+        });
+
+        const userMarker = L.marker([userLocation.lat, userLocation.lng], {
+          icon: userIcon,
+        });
+
+        userMarker.bindPopup(`
+          <div style="font-family: sans-serif; padding: 2px; font-size: 12px;">
+            <strong style="color: ${isInRadius ? '#047857' : '#b91c1c'}; font-size: 13px;">
+              ${isInRadius ? '✅ Dalam Radius Sekolah' : '⚠️ Di Luar Radius Sekolah'}
+            </strong><br/>
+            <span>Jarak: <strong>${distance} meter</strong> (Maks: ${safeRadius}m)</span><br/>
+            <span style="color: #6b7280; font-size: 10px;">${userLocation.address || 'Koordinat Terdeteksi'}</span>
+          </div>
+        `);
+
+        layersGroup.addLayer(userMarker);
+
+        const bounds = L.latLngBounds([
+          [safeSchoolLat, safeSchoolLng],
+          [userLocation.lat, userLocation.lng],
+        ]);
+        map.fitBounds(bounds.pad(0.3), { animate: false });
+      } else {
+        map.panTo([safeSchoolLat, safeSchoolLng], { animate: false });
+      }
+    } catch (err) {
+      console.warn('Error updating Leaflet layers:', err);
+    }
+  }, [
+    safeSchoolLat,
+    safeSchoolLng,
+    schoolLocation?.name,
+    userLocation?.lat,
+    userLocation?.lng,
+    userLocation?.address,
+    safeRadius,
+    isInRadius,
+    distance,
+    showUserMarker,
+  ]);
 
   return (
-    <div className="relative rounded-2xl overflow-hidden border border-slate-200 shadow-sm bg-slate-100 flex flex-col" style={{ height }}>
+    <div
+      className="relative rounded-2xl overflow-hidden border border-slate-200 shadow-sm bg-slate-100 flex flex-col z-0"
+      style={{ height }}
+    >
       {/* Map Top Bar Info */}
-      <div className="absolute top-2 left-2 right-2 z-10 flex items-center justify-between pointer-events-none">
+      <div className="absolute top-2 left-2 right-2 z-1000 flex items-center justify-between pointer-events-none">
         <div className="bg-white/95 backdrop-blur-md px-3 py-1.5 rounded-xl border border-slate-200/80 shadow-md text-xs flex items-center space-x-2 pointer-events-auto">
-          <div className={`w-2.5 h-2.5 rounded-full ${isInRadius ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`} />
+          <div
+            className={`w-2.5 h-2.5 rounded-full ${
+              isInRadius ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'
+            }`}
+          />
           <span className="font-bold text-slate-800">
             {isInRadius ? 'Dalam Radius Geofence' : 'Di Luar Radius Sekolah'}
           </span>
-          <span className="text-slate-400 font-mono text-[11px]">
+          <span className="text-slate-500 font-mono text-[11px]">
             ({distance}m / maks {radiusMeters}m)
           </span>
         </div>
@@ -308,18 +326,22 @@ const InnerGoogleMapView: React.FC<GoogleMapsGeofenceProps> = ({
         <div className="bg-white/95 backdrop-blur-md p-1 rounded-xl border border-slate-200/80 shadow-md flex items-center space-x-1 pointer-events-auto text-[11px] font-bold">
           <button
             type="button"
-            onClick={() => setMapType('roadmap')}
-            className={`px-2 py-1 rounded-lg transition-all ${
-              mapType === 'roadmap' ? 'bg-indigo-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+            onClick={() => setMapType('street')}
+            className={`px-2 py-1 rounded-lg transition-all cursor-pointer ${
+              mapType === 'street'
+                ? 'bg-indigo-600 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
             }`}
           >
             Peta
           </button>
           <button
             type="button"
-            onClick={() => setMapType('hybrid')}
-            className={`px-2 py-1 rounded-lg transition-all ${
-              mapType === 'hybrid' ? 'bg-indigo-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+            onClick={() => setMapType('satellite')}
+            className={`px-2 py-1 rounded-lg transition-all cursor-pointer ${
+              mapType === 'satellite'
+                ? 'bg-indigo-600 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
             }`}
           >
             Satelit
@@ -327,103 +349,11 @@ const InnerGoogleMapView: React.FC<GoogleMapsGeofenceProps> = ({
         </div>
       </div>
 
-      <Map
-        defaultCenter={mapCenter}
-        defaultZoom={17}
-        mapTypeId={mapType}
-        mapId="DEMO_MAP_ID"
-        internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
-        onClick={handleMapClick}
-        className="w-full h-full"
-        disableDefaultUI={false}
-        zoomControl={true}
-        mapTypeControl={false}
-        streetViewControl={false}
-        fullscreenControl={false}
-      >
-        <GeofenceCircle
-          center={{ lat: schoolLocation.lat, lng: schoolLocation.lng }}
-          radius={radiusMeters}
-          isInRadius={isInRadius}
-        />
-
-        <AdvancedMarker
-          position={{ lat: schoolLocation.lat, lng: schoolLocation.lng }}
-          title={schoolLocation.name || 'Lokasi Sekolah'}
-          onClick={() => setSelectedMarker('school')}
-        >
-          <Pin
-            background="#4F46E5"
-            borderColor="#312E81"
-            glyphColor="#FFFFFF"
-            scale={1.15}
-          />
-        </AdvancedMarker>
-
-        {showUserMarker && userLocation && (
-          <AdvancedMarker
-            position={{ lat: userLocation.lat, lng: userLocation.lng }}
-            title="Posisi Anda Saat Ini"
-            onClick={() => setSelectedMarker('user')}
-          >
-            <div className="relative flex items-center justify-center">
-              <div className={`absolute -inset-2 rounded-full opacity-40 animate-ping ${isInRadius ? 'bg-emerald-500' : 'bg-rose-500'}`} />
-              <Pin
-                background={isInRadius ? '#059669' : '#DC2626'}
-                borderColor="#FFFFFF"
-                glyphColor="#FFFFFF"
-                scale={1.1}
-              />
-            </div>
-          </AdvancedMarker>
-        )}
-
-        {selectedMarker === 'school' && (
-          <InfoWindow
-            position={{ lat: schoolLocation.lat, lng: schoolLocation.lng }}
-            onCloseClick={() => setSelectedMarker(null)}
-          >
-            <div className="p-2 text-xs space-y-1 max-w-xs">
-              <div className="font-bold text-slate-900 flex items-center space-x-1">
-                <School className="w-3.5 h-3.5 text-indigo-600" />
-                <span>{schoolLocation.name || 'Titik Pusat Sekolah'}</span>
-              </div>
-              <p className="text-slate-600 text-[11px]">
-                Koordinat: {schoolLocation.lat.toFixed(6)}, {schoolLocation.lng.toFixed(6)}
-              </p>
-              <div className="bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded text-[10px] font-bold inline-block">
-                Radius Geofence: {radiusMeters} Meter
-              </div>
-            </div>
-          </InfoWindow>
-        )}
-
-        {selectedMarker === 'user' && userLocation && (
-          <InfoWindow
-            position={{ lat: userLocation.lat, lng: userLocation.lng }}
-            onCloseClick={() => setSelectedMarker(null)}
-          >
-            <div className="p-2 text-xs space-y-1 max-w-xs">
-              <div className="font-bold text-slate-900 flex items-center space-x-1">
-                <Navigation className="w-3.5 h-3.5 text-emerald-600" />
-                <span>Posisi Presensi Anda</span>
-              </div>
-              <p className="text-slate-600 text-[11px]">
-                {userLocation.address || 'Koordinat Terdeteksi'}
-              </p>
-              <p className="text-slate-500 font-mono text-[10px]">
-                {userLocation.lat.toFixed(6)}, {userLocation.lng.toFixed(6)}
-              </p>
-              <div className={`px-2 py-0.5 rounded text-[10px] font-bold inline-block ${isInRadius ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}`}>
-                Jarak ke Sekolah: {distance} Meter ({isInRadius ? 'Valid' : 'Terlalu Jauh'})
-              </div>
-            </div>
-          </InfoWindow>
-        )}
-      </Map>
+      {/* Leaflet Map Target DOM */}
+      <div ref={mapContainerRef} className="w-full h-full z-0" />
 
       {isInteractive && (
-        <div className="bg-slate-900/90 backdrop-blur-xs text-white text-[11px] px-3 py-1.5 flex items-center justify-between border-t border-slate-800">
+        <div className="bg-slate-900/90 backdrop-blur-xs text-white text-[11px] px-3 py-1.5 flex items-center justify-between border-t border-slate-800 z-1000">
           <span className="flex items-center space-x-1">
             <MapPin className="w-3 h-3 text-amber-400" />
             <span>Klik pada peta untuk memindahkan titik koordinat pusat sekolah</span>
@@ -436,84 +366,3 @@ const InnerGoogleMapView: React.FC<GoogleMapsGeofenceProps> = ({
     </div>
   );
 };
-
-// Safe API loader wrapper that automatically falls back to radar if key is missing/unactivated
-const SafeMapContainer: React.FC<GoogleMapsGeofenceProps> = (props) => {
-  const status = useApiLoadingStatus();
-
-  if (status === APILoadingStatus.LOADED) {
-    return <InnerGoogleMapView {...props} />;
-  }
-
-  if (status === APILoadingStatus.FAILED || status === APILoadingStatus.AUTH_FAILURE) {
-    return (
-      <RadarGeofenceFallback
-        {...props}
-        errorMessage="Google Maps API belum diaktivasi pada project. Menampilkan Mode Radar Geofence."
-      />
-    );
-  }
-
-  // Loading state
-  return (
-    <div
-      className="rounded-2xl border border-slate-200 bg-slate-900 flex flex-col items-center justify-center p-6 text-white space-y-3"
-      style={{ height: props.height || '280px' }}
-    >
-      <div className="w-8 h-8 border-3 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-      <span className="text-xs font-bold text-slate-300">Memuat Peta Google Maps...</span>
-    </div>
-  );
-};
-
-export const GoogleMapsGeofence: React.FC<GoogleMapsGeofenceProps> = (props) => {
-  const [authFailed, setAuthFailed] = useState(false);
-
-  useEffect(() => {
-    // Listen for global Google Maps auth failure
-    const handleAuthError = () => {
-      setAuthFailed(true);
-    };
-    window.addEventListener('gm_authFailure', handleAuthError);
-    return () => window.removeEventListener('gm_authFailure', handleAuthError);
-  }, []);
-
-  const distance = useMemo(() => {
-    if (!props.userLocation) return 0;
-    return calculateDistanceMeters(
-      props.schoolLocation.lat,
-      props.schoolLocation.lng,
-      props.userLocation.lat,
-      props.userLocation.lng
-    );
-  }, [props.schoolLocation, props.userLocation]);
-
-  const isInRadius = distance <= props.radiusMeters;
-
-  useEffect(() => {
-    if (props.userLocation && props.onDistanceCalculated) {
-      props.onDistanceCalculated(distance, isInRadius);
-    }
-  }, [distance, isInRadius, props.userLocation, props.onDistanceCalculated]);
-
-  // If no API key configured or auth failed, render Radar directly
-  if (!GOOGLE_MAPS_API_KEY || authFailed) {
-    return (
-      <RadarGeofenceFallback
-        {...props}
-        errorMessage={
-          !GOOGLE_MAPS_API_KEY
-            ? 'Kunci API Maps belum diatur. Mode Radar Geofence aktif.'
-            : 'Google Maps API belum diaktifkan pada project. Mode Radar Geofence aktif.'
-        }
-      />
-    );
-  }
-
-  return (
-    <APIProvider apiKey={GOOGLE_MAPS_API_KEY} libraries={['places', 'marker', 'geometry']}>
-      <SafeMapContainer {...props} />
-    </APIProvider>
-  );
-};
-

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   ActiveTab,
   AttendanceRecord,
@@ -52,20 +52,24 @@ import { StudentCardsTab } from './components/StudentCardsTab';
 import { AcademicCalendarTab } from './components/AcademicCalendarTab';
 import { ConfigTab } from './components/ConfigTab';
 import { PrintModal } from './components/PrintModal';
+import { AppInstallModal } from './components/AppInstallModal';
 import { QuickActionsFab } from './components/QuickActionsFab';
 import { SystemSyncStatusFooter } from './components/SystemSyncStatusFooter';
 import { School, ShieldCheck, Sparkles, HardDrive, AlertOctagon, Lock } from 'lucide-react';
 import { playBeepSound, formatDateIndo } from './utils/soundAndDate';
 import { saveBackupToFirestore } from './lib/firebase';
+import { syncManager } from './utils/syncManager';
+import { notifyAbsenceOrLateViaWhatsApp } from './utils/whatsapp';
 
 export default function App() {
   const todayDate = getTodayDateString();
 
-  // State initialization with localStorage persistence
+  // State initialization with localStorage persistence and robust array validation
   const [config, setConfig] = useState<SchoolConfig>(() => {
     try {
       const saved = localStorage.getItem('school_presensi_config');
-      return saved ? JSON.parse(saved) : INITIAL_SCHOOL_CONFIG;
+      const parsed = saved ? JSON.parse(saved) : null;
+      return parsed && typeof parsed === 'object' ? parsed : INITIAL_SCHOOL_CONFIG;
     } catch {
       return INITIAL_SCHOOL_CONFIG;
     }
@@ -74,7 +78,8 @@ export default function App() {
   const [classes, setClasses] = useState<SchoolClass[]>(() => {
     try {
       const saved = localStorage.getItem('school_presensi_classes');
-      return saved ? JSON.parse(saved) : INITIAL_CLASSES;
+      const parsed = saved ? JSON.parse(saved) : null;
+      return Array.isArray(parsed) ? parsed : INITIAL_CLASSES;
     } catch {
       return INITIAL_CLASSES;
     }
@@ -83,7 +88,8 @@ export default function App() {
   const [students, setStudents] = useState<Student[]>(() => {
     try {
       const saved = localStorage.getItem('school_presensi_students');
-      return saved ? JSON.parse(saved) : INITIAL_STUDENTS;
+      const parsed = saved ? JSON.parse(saved) : null;
+      return Array.isArray(parsed) ? parsed : INITIAL_STUDENTS;
     } catch {
       return INITIAL_STUDENTS;
     }
@@ -92,7 +98,8 @@ export default function App() {
   const [teachers, setTeachers] = useState<Teacher[]>(() => {
     try {
       const saved = localStorage.getItem('school_presensi_teachers');
-      return saved ? JSON.parse(saved) : INITIAL_TEACHERS;
+      const parsed = saved ? JSON.parse(saved) : null;
+      return Array.isArray(parsed) ? parsed : INITIAL_TEACHERS;
     } catch {
       return INITIAL_TEACHERS;
     }
@@ -101,7 +108,8 @@ export default function App() {
   const [records, setRecords] = useState<AttendanceRecord[]>(() => {
     try {
       const saved = localStorage.getItem('school_presensi_records');
-      return saved ? JSON.parse(saved) : INITIAL_ATTENDANCE_RECORDS;
+      const parsed = saved ? JSON.parse(saved) : null;
+      return Array.isArray(parsed) ? parsed : INITIAL_ATTENDANCE_RECORDS;
     } catch {
       return INITIAL_ATTENDANCE_RECORDS;
     }
@@ -110,7 +118,8 @@ export default function App() {
   const [leaves, setLeaves] = useState<LeaveRequest[]>(() => {
     try {
       const saved = localStorage.getItem('school_presensi_leaves');
-      return saved ? JSON.parse(saved) : INITIAL_LEAVE_REQUESTS;
+      const parsed = saved ? JSON.parse(saved) : null;
+      return Array.isArray(parsed) ? parsed : INITIAL_LEAVE_REQUESTS;
     } catch {
       return INITIAL_LEAVE_REQUESTS;
     }
@@ -119,7 +128,8 @@ export default function App() {
   const [gtkServices, setGtkServices] = useState<GtkServiceRequest[]>(() => {
     try {
       const saved = localStorage.getItem('school_presensi_gtk_services');
-      return saved ? JSON.parse(saved) : INITIAL_GTK_SERVICES;
+      const parsed = saved ? JSON.parse(saved) : null;
+      return Array.isArray(parsed) ? parsed : INITIAL_GTK_SERVICES;
     } catch {
       return INITIAL_GTK_SERVICES;
     }
@@ -128,7 +138,8 @@ export default function App() {
   const [events, setEvents] = useState<AcademicEvent[]>(() => {
     try {
       const saved = localStorage.getItem('school_presensi_events');
-      return saved ? JSON.parse(saved) : INITIAL_ACADEMIC_EVENTS;
+      const parsed = saved ? JSON.parse(saved) : null;
+      return Array.isArray(parsed) ? parsed : INITIAL_ACADEMIC_EVENTS;
     } catch {
       return INITIAL_ACADEMIC_EVENTS;
     }
@@ -137,7 +148,8 @@ export default function App() {
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>(() => {
     try {
       const saved = localStorage.getItem('school_presensi_activity_logs');
-      return saved ? JSON.parse(saved) : INITIAL_ACTIVITY_LOGS;
+      const parsed = saved ? JSON.parse(saved) : null;
+      return Array.isArray(parsed) ? parsed : INITIAL_ACTIVITY_LOGS;
     } catch {
       return INITIAL_ACTIVITY_LOGS;
     }
@@ -146,7 +158,8 @@ export default function App() {
   const [biometricLogs, setBiometricLogs] = useState<BiometricLog[]>(() => {
     try {
       const saved = localStorage.getItem('school_presensi_biometric_logs');
-      return saved ? JSON.parse(saved) : INITIAL_BIOMETRIC_LOGS;
+      const parsed = saved ? JSON.parse(saved) : null;
+      return Array.isArray(parsed) ? parsed : INITIAL_BIOMETRIC_LOGS;
     } catch {
       return INITIAL_BIOMETRIC_LOGS;
     }
@@ -155,7 +168,8 @@ export default function App() {
   const [dutyRoster, setDutyRoster] = useState<DutyAssignment[]>(() => {
     try {
       const saved = localStorage.getItem('school_presensi_duty_roster');
-      return saved ? JSON.parse(saved) : INITIAL_DUTY_ROSTER;
+      const parsed = saved ? JSON.parse(saved) : null;
+      return Array.isArray(parsed) ? parsed : INITIAL_DUTY_ROSTER;
     } catch {
       return INITIAL_DUTY_ROSTER;
     }
@@ -174,7 +188,8 @@ export default function App() {
   const [notifications, setNotifications] = useState<ToastNotification[]>(() => {
     try {
       const saved = localStorage.getItem('school_presensi_notifs');
-      const loaded: ToastNotification[] = saved ? JSON.parse(saved) : INITIAL_NOTIFICATIONS;
+      const parsed = saved ? JSON.parse(saved) : null;
+      const loaded: ToastNotification[] = Array.isArray(parsed) ? parsed : INITIAL_NOTIFICATIONS;
       const seen = new Set<string>();
       return loaded.filter((n) => {
         if (!n || !n.id || seen.has(n.id)) return false;
@@ -189,8 +204,114 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
   const [userRole, setUserRole] = useState<UserRole>('admin');
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
-  const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('school_presensi_sidebar_collapsed') === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const [isSidebarLocked, setIsSidebarLocked] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('school_presensi_sidebar_locked') === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const [isFullScreen, setIsFullScreen] = useState<boolean>(false);
+  const [printModalState, setPrintModalState] = useState<{
+    isOpen: boolean;
+    records?: AttendanceRecord[];
+    dateRangeLabel?: string;
+    customTitle?: string;
+  }>({ isOpen: false });
   const [isDailyBackupModalOpen, setIsDailyBackupModalOpen] = useState(false);
+  const [isInstallModalOpen, setIsInstallModalOpen] = useState(false);
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+
+  // Sync collapsed & locked state to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('school_presensi_sidebar_collapsed', isSidebarCollapsed ? 'true' : 'false');
+    } catch {}
+  }, [isSidebarCollapsed]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('school_presensi_sidebar_locked', isSidebarLocked ? 'true' : 'false');
+    } catch {}
+  }, [isSidebarLocked]);
+
+  // Hook to detect screen resize events: auto-collapse sidebar if below lg breakpoint (1024px)
+  useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth < 1024) {
+        setIsSidebarCollapsed(true);
+      }
+    };
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // Fullscreen change listener
+  useEffect(() => {
+    const handleFsChange = () => {
+      const isFs = !!document.fullscreenElement;
+      setIsFullScreen(isFs);
+      if (isFs) {
+        // Auto-collapse sidebar in full screen for maximum screen real estate
+        setIsSidebarCollapsed(true);
+      }
+    };
+    document.addEventListener('fullscreenchange', handleFsChange);
+    return () => document.removeEventListener('fullscreenchange', handleFsChange);
+  }, []);
+
+  const handleToggleFullScreen = () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(() => {});
+      setIsSidebarCollapsed(true);
+    } else {
+      if (document.exitFullscreen) {
+        document.exitFullscreen().catch(() => {});
+      }
+    }
+  };
+
+  // Dynamic favicon & apple-touch-icon updater when logo changes
+  useEffect(() => {
+    if (config.logoUrl) {
+      const favicon = document.getElementById('app-favicon') as HTMLLinkElement;
+      if (favicon) favicon.href = config.logoUrl;
+      const appleIcon = document.getElementById('app-apple-icon') as HTMLLinkElement;
+      if (appleIcon) appleIcon.href = config.logoUrl;
+    }
+  }, [config.logoUrl]);
+
+  // Capture PWA beforeinstallprompt event
+  useEffect(() => {
+    const handleBeforeInstall = (e: Event) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstall);
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstall);
+    };
+  }, []);
+
+  const handleInstallPwa = async () => {
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      if (outcome === 'accepted') {
+        setDeferredPrompt(null);
+        setIsInstallModalOpen(false);
+      }
+    }
+  };
 
   // Automated Daily Backup Check: If no backup prompted today, prompt user to safeguard data
   useEffect(() => {
@@ -313,10 +434,86 @@ export default function App() {
     }
   }, [notifications]);
 
-  // Biometric Logs Handler
-  const handleAddBiometricLog = (newLog: BiometricLog) => {
-    setBiometricLogs((prev) => [newLog, ...prev]);
-  };
+  // Logic Hook & Anomaly Detector: Detect 3 consecutive failed biometric attempts within 5 minutes
+  const lastAlertedAttemptRef = useRef<Set<string>>(new Set());
+
+  const checkBiometricConsecutiveFailures = useCallback((updatedLogs: BiometricLog[], targetPersonId?: string) => {
+    const userMap = new Map<string, BiometricLog[]>();
+
+    updatedLogs.forEach((log) => {
+      const pid = log.personId || log.identifier || log.personName;
+      if (!pid) return;
+      if (targetPersonId && pid !== targetPersonId) return;
+
+      if (!userMap.has(pid)) userMap.set(pid, []);
+      userMap.get(pid)!.push(log);
+    });
+
+    userMap.forEach((userLogs, pid) => {
+      // Sort chronologically ascending
+      const sorted = [...userLogs].sort((a, b) => {
+        const tA = new Date(`${a.date} ${a.time}`).getTime();
+        const tB = new Date(`${b.date} ${b.time}`).getTime();
+        return tA - tB;
+      });
+
+      let consecutiveFails = 0;
+      let failTimestamps: number[] = [];
+      let lastFailedLog: BiometricLog | null = null;
+
+      for (let i = 0; i < sorted.length; i++) {
+        const item = sorted[i];
+        const isFail = item.status === 'failed' || item.severity === 'error';
+        const itemTime = new Date(`${item.date} ${item.time}`).getTime();
+
+        if (isFail) {
+          consecutiveFails++;
+          failTimestamps.push(itemTime);
+          lastFailedLog = item;
+
+          if (consecutiveFails >= 3) {
+            const newestTime = failTimestamps[failTimestamps.length - 1];
+            const thirdLastTime = failTimestamps[failTimestamps.length - 3];
+            const diffMinutes = (newestTime - thirdLastTime) / (1000 * 60);
+
+            if (diffMinutes <= 5 && lastFailedLog) {
+              const alertKey = `${pid}_${lastFailedLog.id}`;
+              if (!lastAlertedAttemptRef.current.has(alertKey)) {
+                lastAlertedAttemptRef.current.add(alertKey);
+
+                const warningNotif: ToastNotification = {
+                  id: `notif_bio_warn_${Date.now()}`,
+                  title: '🚨 Peringatan Keamanan: 3x Kegagalan Biometrik Beruntun',
+                  message: `Deteksi Anomali: ${lastFailedLog.personName} (${lastFailedLog.identifier || 'GTK/ASN'}) mengalami ${consecutiveFails} kali kegagalan otentikasi wajah berturut-turut dalam ${Math.max(1, Math.round(diffMinutes))} menit. Terakhir: ${lastFailedLog.time} WITA (${lastFailedLog.failureReason || 'Skor rendah / Mock GPS / Liveness'}).`,
+                  type: 'system',
+                  timestamp: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WITA',
+                  read: false,
+                };
+
+                setNotifications((prev) => [warningNotif, ...prev.slice(0, 12)]);
+              }
+              break;
+            }
+          }
+        } else {
+          consecutiveFails = 0;
+          failTimestamps = [];
+        }
+      }
+    });
+  }, []);
+
+  // Biometric Logs Handler with Anomaly Hook Trigger
+  const handleAddBiometricLog = useCallback((newLog: BiometricLog) => {
+    setBiometricLogs((prev) => {
+      const updated = [newLog, ...prev];
+      const pid = newLog.personId || newLog.identifier || newLog.personName;
+      setTimeout(() => {
+        checkBiometricConsecutiveFailures(updated, pid);
+      }, 50);
+      return updated;
+    });
+  }, [checkBiometricConsecutiveFailures]);
 
   // Duty Roster Handlers
   const handleAddOrUpdateDuty = (duty: DutyAssignment) => {
@@ -378,13 +575,15 @@ export default function App() {
     setNotifications((prev) => [notif, ...prev.slice(0, 8)]);
   };
 
-  // Realtime Cloud Handshake Sync Trigger
+  // Realtime Cloud Handshake Sync Trigger with Exponential Backoff
   const handleTriggerHandshakeSync = async () => {
     try {
       const payload = generateBackupPayload();
-      await saveBackupToFirestore(payload);
+      syncManager.enqueue('backup_snapshot', payload);
+      await syncManager.processQueue();
       setLastHandshakeTime(new Date());
     } catch (e) {
+      console.warn('[Sync] Offline / Retry scheduled:', e);
       setLastHandshakeTime(new Date());
     }
   };
@@ -455,27 +654,29 @@ export default function App() {
     setNotifications((prev) => [notif, ...prev.slice(0, 8)]);
   }, [generateBackupPayload, config.schoolName, todayDate]);
 
-  // Cloud Firestore Backup Integration
+  // Cloud Firestore Backup Integration with SyncQueue
   const handleCloudBackup = useCallback(async (): Promise<boolean> => {
     const payload = generateBackupPayload();
     try {
+      syncManager.enqueue('backup_snapshot', payload);
       const res = await saveBackupToFirestore(payload);
-      if (res.success) {
-        localStorage.setItem('school_presensi_last_backup_prompt_date', todayDate);
-        const notif: ToastNotification = {
-          id: `notif_cloud_${Date.now()}`,
-          title: 'Cloud Firestore Sync Sukses',
-          message: `Data presensi SMPN 4 Satap Taliabu Barat tersinkronisasi aman ke Cloud Firestore (${res.id}).`,
-          type: 'system',
-          timestamp: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WIB',
-          read: false,
-        };
-        setNotifications((prev) => [notif, ...prev.slice(0, 8)]);
-        return true;
-      }
-      return false;
+      localStorage.setItem('school_presensi_last_backup_prompt_date', todayDate);
+      setLastHandshakeTime(new Date());
+
+      const notif: ToastNotification = {
+        id: `notif_cloud_${Date.now()}`,
+        title: res.success ? 'Cloud Firestore Sync Sukses' : 'Tersimpan ke Antrean Offline',
+        message: res.success
+          ? `Data presensi SMPN 4 Satap Taliabu Barat tersinkronisasi aman ke Cloud Firestore (${res.id}).`
+          : 'Data disimpan lokal dan akan otomatis sinkron saat jaringan online kembali.',
+        type: 'system',
+        timestamp: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WIB',
+        read: false,
+      };
+      setNotifications((prev) => [notif, ...prev.slice(0, 8)]);
+      return res.success;
     } catch (err) {
-      console.error('Cloud backup error:', err);
+      console.warn('Cloud backup queued for retry:', err);
       return false;
     }
   }, [generateBackupPayload, todayDate]);
@@ -520,6 +721,19 @@ export default function App() {
       }
       return [newRecord, ...prev];
     });
+
+    // Auto-trigger WhatsApp notification if marked as alpa or terlambat
+    if (newRecord.status === 'alpa' || newRecord.status === 'terlambat') {
+      try {
+        const person =
+          newRecord.personType === 'student'
+            ? students.find((s) => s.id === newRecord.personId || s.nisn === newRecord.identifier)
+            : teachers.find((t) => t.id === newRecord.personId || t.nip === newRecord.identifier);
+        notifyAbsenceOrLateViaWhatsApp(newRecord, config, person);
+      } catch (e) {
+        console.warn('Auto WhatsApp notification notice:', e);
+      }
+    }
 
     const newNotif: ToastNotification = {
       id: `notif_${Date.now()}`,
@@ -814,11 +1028,20 @@ export default function App() {
         totalTodayCount={todayRecordsCount}
         isMobileOpen={isMobileSidebarOpen}
         setIsMobileOpen={setIsMobileSidebarOpen}
+        isCollapsed={isSidebarCollapsed}
+        setIsCollapsed={setIsSidebarCollapsed}
+        isLocked={isSidebarLocked}
+        setIsLocked={setIsSidebarLocked}
         onTriggerSimulation={handleTriggerSimulation}
+        onOpenInstallModal={() => setIsInstallModalOpen(true)}
       />
 
       {/* Main Container */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-x-hidden">
+      <div
+        className={`flex-1 flex flex-col min-w-0 overflow-x-hidden transition-all duration-300 ${
+          isSidebarCollapsed ? 'lg:pl-0' : 'lg:pl-72'
+        }`}
+      >
         {/* Top Header & Notification Banner */}
         <NotificationBanner
           notifications={notifications}
@@ -826,10 +1049,20 @@ export default function App() {
           onReviewLeave={handleReviewLeave}
           onTriggerSimulation={handleTriggerSimulation}
           onOpenBackupPrompt={() => setIsDailyBackupModalOpen(true)}
+          onOpenInstallModal={() => setIsInstallModalOpen(true)}
           pendingLeaves={safeLeaves}
           activeTab={activeTab}
           setActiveTab={setActiveTab}
-          onOpenMobileMenu={() => setIsMobileSidebarOpen(true)}
+          onOpenMobileMenu={() => {
+            if (isSidebarCollapsed) {
+              setIsSidebarCollapsed(false);
+            }
+            setIsMobileSidebarOpen(true);
+          }}
+          isSidebarCollapsed={isSidebarCollapsed}
+          onToggleSidebar={() => setIsSidebarCollapsed((prev) => !prev)}
+          isFullScreen={isFullScreen}
+          onToggleFullScreen={handleToggleFullScreen}
           config={config}
           userRole={userRole}
         />
@@ -870,11 +1103,19 @@ export default function App() {
               leaveRequests={leaves}
               leaves={leaves}
               config={config}
+              events={events}
               biometricLogs={biometricLogs}
               currentStreak={14}
+              userRole={userRole}
               setActiveTab={setActiveTab}
               onNavigateTab={setActiveTab}
-              onOpenPrintModal={() => setIsPrintModalOpen(true)}
+              onOpenPrintModal={() =>
+                setPrintModalState({
+                  isOpen: true,
+                  records,
+                  customTitle: 'REKAPITULASI PRESENSI HARIAN GTK & ASN',
+                })
+              }
               onAddNotification={handleAddNotification}
             />
           )}
@@ -886,6 +1127,7 @@ export default function App() {
               teachers={teachers}
               config={config}
               onRecordAttendance={handleRecordAttendance}
+              onDeleteRecord={handleDeleteRecord}
               existingRecords={records}
             />
           )}
@@ -898,6 +1140,7 @@ export default function App() {
               config={config}
               events={events}
               onRecordAttendance={handleRecordAttendance}
+              onAddBiometricLog={handleAddBiometricLog}
               existingRecords={records}
             />
           )}
@@ -934,7 +1177,14 @@ export default function App() {
               config={config}
               todayDate={todayDate}
               onDeleteRecord={handleDeleteRecord}
-              onOpenPrintModal={() => setIsPrintModalOpen(true)}
+              onOpenPrintModal={(customRecs, dateLabel) =>
+                setPrintModalState({
+                  isOpen: true,
+                  records: customRecs || records,
+                  dateRangeLabel: dateLabel,
+                  customTitle: 'BERITA ACARA REKAPITULASI PRESENSI',
+                })
+              }
             />
           )}
 
@@ -944,6 +1194,9 @@ export default function App() {
               teachers={teachers}
               students={students}
               config={config}
+              userRole={userRole}
+              onUpdateConfig={(updated) => setConfig((prev) => ({ ...prev, ...updated }))}
+              onAddLog={(newLog) => setActivityLogs((prev) => [newLog, ...prev])}
             />
           )}
 
@@ -980,6 +1233,8 @@ export default function App() {
               logs={activityLogs}
               onClearLogs={() => setActivityLogs([])}
               onAddLog={(newLog) => setActivityLogs((prev) => [newLog, ...prev])}
+              schoolConfig={config}
+              userRole={userRole}
             />
           )}
 
@@ -997,6 +1252,8 @@ export default function App() {
           {activeTab === 'teachers' && (
             <TeacherManagementTab
               teachers={teachers}
+              records={records}
+              config={config}
               onAddTeacher={handleAddTeacher}
               onUpdateTeacher={handleUpdateTeacher}
               onDeleteTeacher={handleDeleteTeacher}
@@ -1027,8 +1284,12 @@ export default function App() {
 
           {activeTab === 'biometric_logs' && (
             <BiometricLogsTab
-              logs={biometricLogs}
-              onAddLog={handleAddBiometricLog}
+              biometricLogs={biometricLogs}
+              config={config}
+              teachers={teachers}
+              students={students}
+              onAddBiometricLog={handleAddBiometricLog}
+              onUpdateLogs={setBiometricLogs}
               onClearLogs={() => setBiometricLogs([])}
             />
           )}
@@ -1090,15 +1351,28 @@ export default function App() {
         />
 
         {/* Global Modal for Document Print Preview */}
-        {isPrintModalOpen && (
+        {printModalState.isOpen && (
           <PrintModal
-            onClose={() => setIsPrintModalOpen(false)}
+            onClose={() => setPrintModalState({ isOpen: false })}
             config={config}
-            records={records}
+            records={printModalState.records || records}
             students={students}
+            teachers={teachers}
             todayDate={todayDate}
+            dateRangeLabel={printModalState.dateRangeLabel}
+            customTitle={printModalState.customTitle}
           />
         )}
+
+        {/* Global Modal for App Installation & Mobile PWA Setup */}
+        <AppInstallModal
+          isOpen={isInstallModalOpen}
+          onClose={() => setIsInstallModalOpen(false)}
+          config={config}
+          deferredPrompt={deferredPrompt}
+          onInstallPwa={handleInstallPwa}
+          onChangeIconClick={() => setActiveTab('config')}
+        />
 
         {/* Real-time System Sync Status Footer */}
         <SystemSyncStatusFooter

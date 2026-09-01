@@ -20,6 +20,13 @@ import {
   FileCheck2,
   History,
   UserCheck,
+  Download,
+  Smartphone,
+  Palette,
+  PanelLeftClose,
+  Pin,
+  PinOff,
+  Building2,
 } from 'lucide-react';
 import { ActiveTab, SchoolConfig, UserRole } from '../types';
 
@@ -34,7 +41,12 @@ interface SidebarProps {
   totalTodayCount: number;
   isMobileOpen: boolean;
   setIsMobileOpen: (open: boolean) => void;
+  isCollapsed?: boolean;
+  setIsCollapsed?: (collapsed: boolean | ((prev: boolean) => boolean)) => void;
+  isLocked?: boolean;
+  setIsLocked?: (locked: boolean | ((prev: boolean) => boolean)) => void;
   onTriggerSimulation: () => void;
+  onOpenInstallModal?: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -48,8 +60,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
   totalTodayCount,
   isMobileOpen,
   setIsMobileOpen,
+  isCollapsed = false,
+  setIsCollapsed,
+  isLocked = false,
+  setIsLocked,
   onTriggerSimulation,
+  onOpenInstallModal,
 }) => {
+  const isAutomationAdmin = userRole === 'admin' || userRole === 'bkd_staff' || userRole === 'bkd';
+
   const menuGroups = [
     {
       groupTitle: 'UTAMA & MONITORING',
@@ -71,18 +90,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
       ],
     },
     {
-      groupTitle: 'PRESENSI ELEKTRONIK',
+      groupTitle: 'PRESENSI ELEKTRONIK GTK',
       items: [
         {
           id: 'scan' as ActiveTab,
-          label: 'Scanner QR Code',
+          label: 'Scanner QR Code Guru/GTK',
           icon: QrCode,
         },
         {
           id: 'selfie' as ActiveTab,
           label: 'Selfie + GPS & BKD',
           icon: Camera,
-          badge: 'BKD',
+          badge: 'BKD ASN',
           badgeColor: 'bg-amber-100 text-amber-800',
         },
         {
@@ -96,17 +115,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
           id: 'bkd_automation' as ActiveTab,
           label: 'Otomasi BKD Taliabu',
           icon: FileCheck2,
-          badge: '15:00 Otomatis',
-          badgeColor: 'bg-emerald-100 text-emerald-800',
-        },
-        {
-          id: 'batch_class' as ActiveTab,
-          label: 'Absensi Rombel (Kelas)',
-          icon: Users2,
+          badge: isAutomationAdmin ? '15:00 Otomatis' : 'Mode Baca',
+          badgeColor: isAutomationAdmin
+            ? 'bg-emerald-100 text-emerald-800 font-extrabold'
+            : 'bg-slate-100 text-slate-600',
         },
         {
           id: 'rekap' as ActiveTab,
-          label: 'Rekapitulasi Presensi',
+          label: 'Rekapitulasi Presensi GTK',
           icon: FileSpreadsheet,
           badge: 'Excel / CSV',
           badgeColor: 'bg-slate-100 text-slate-700',
@@ -120,51 +136,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
           id: 'layanan_gtk' as ActiveTab,
           label: 'Layanan & Izin GTK',
           icon: Award,
-          badge: pendingGtkCount > 0 ? `${pendingGtkCount} Verifikasi` : 'Kepsek & Admin',
+          badge: pendingGtkCount > 0 ? `${pendingGtkCount} Verifikasi` : 'Persetujuan Ganda',
           badgeColor: pendingGtkCount > 0 ? 'bg-amber-500 text-white animate-pulse' : 'bg-indigo-50 text-indigo-700',
-        },
-        {
-          id: 'leaves' as ActiveTab,
-          label: 'Izin & Sakit Siswa',
-          icon: FileText,
-          badge: pendingLeavesCount > 0 ? `${pendingLeavesCount} Baru` : undefined,
-          badgeColor: 'bg-rose-500 text-white animate-pulse',
         },
       ],
     },
     {
-      groupTitle: 'DATA POKOK PENDIDIKAN',
+      groupTitle: 'DATA KEPEGAWAIAN & GTK',
       items: [
         {
           id: 'teachers' as ActiveTab,
-          label: 'Data Guru & Pegawai',
+          label: 'Data Guru & Pegawai ASN',
           icon: Briefcase,
           badge: 'PNS/PPPK',
           badgeColor: 'bg-purple-100 text-purple-700',
         },
         {
           id: 'duty_roster' as ActiveTab,
-          label: 'Jadwal Guru Piket',
+          label: 'Jadwal & Roster Guru Piket',
           icon: UserCheck,
-          badge: 'Piket Hari Ini',
+          badge: 'Piket Harian',
           badgeColor: 'bg-emerald-100 text-emerald-800',
-        },
-        {
-          id: 'students' as ActiveTab,
-          label: 'Data Siswa & Rombel',
-          icon: GraduationCap,
-        },
-        {
-          id: 'cards' as ActiveTab,
-          label: 'Kartu QR Siswa & GTK',
-          icon: CreditCard,
-          badge: 'QR Card',
-          badgeColor: 'bg-blue-100 text-blue-700',
         },
       ],
     },
     {
-      groupTitle: 'CLOUD & INTEGRASI',
+      groupTitle: 'CLOUD & SISTEM AUDIT',
       items: [
         {
           id: 'workspace' as ActiveTab,
@@ -175,14 +172,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
         },
         {
           id: 'logs' as ActiveTab,
-          label: 'Log Aktivitas & Audit',
+          label: 'Log Aktivitas & Jejak Audit',
           icon: History,
           badge: 'Audit Trail',
           badgeColor: 'bg-slate-100 text-slate-700',
         },
         {
           id: 'config' as ActiveTab,
-          label: 'Pengaturan & Logo',
+          label: 'Pengaturan & SIMPEG',
           icon: Settings,
         },
       ],
@@ -192,22 +189,30 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const handleNavClick = (tab: ActiveTab) => {
     setActiveTab(tab);
     setIsMobileOpen(false);
+    // Auto-hide / collapse sidebar on navigation if sidebar is not locked
+    if (!isLocked && setIsCollapsed) {
+      setIsCollapsed(true);
+    }
   };
 
   return (
     <>
-      {/* Mobile Backdrop */}
+      {/* Mobile Backdrop & Overlay when opened */}
       {isMobileOpen && (
         <div
-          className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-40 lg:hidden"
+          className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-40"
           onClick={() => setIsMobileOpen(false)}
         />
       )}
 
       {/* Sidebar Container */}
       <aside
-        className={`fixed top-0 left-0 bottom-0 z-50 w-72 bg-white border-r border-slate-200/90 shadow-lg lg:shadow-none flex flex-col transition-transform duration-300 ease-in-out ${
-          isMobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
+        className={`fixed top-0 left-0 bottom-0 z-50 w-72 bg-white border-r border-slate-200/90 shadow-xl flex flex-col transition-transform duration-300 ease-in-out ${
+          isMobileOpen
+            ? 'translate-x-0'
+            : isCollapsed
+            ? '-translate-x-full'
+            : '-translate-x-full lg:translate-x-0'
         }`}
       >
         {/* Brand Header with School Logo */}
@@ -238,53 +243,143 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
           </div>
 
-          {/* Close button on mobile */}
-          <button
-            onClick={() => setIsMobileOpen(false)}
-            className="lg:hidden p-1.5 text-slate-400 hover:text-slate-700 rounded-xl hover:bg-slate-100 cursor-pointer"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center space-x-1">
+            {/* Desktop Lock / Pinned Toggle Button */}
+            {setIsLocked && (
+              <button
+                onClick={() => setIsLocked((prev) => !prev)}
+                className={`hidden lg:flex p-1.5 rounded-xl transition-all cursor-pointer ${
+                  isLocked
+                    ? 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200'
+                    : 'text-slate-400 hover:text-slate-700 hover:bg-slate-100'
+                }`}
+                title={
+                  isLocked
+                    ? 'Sidebar Terkunci Terbuka (Pinned) - Klik untuk Buka Kunci (Auto-Hide)'
+                    : 'Sidebar Bebas (Auto-Hide saat memilih menu) - Klik untuk Kunci Terbuka (Pinned)'
+                }
+              >
+                {isLocked ? <Pin className="w-4 h-4" /> : <PinOff className="w-4 h-4" />}
+              </button>
+            )}
+
+            {/* Desktop collapse button */}
+            {setIsCollapsed && (
+              <button
+                onClick={() => setIsCollapsed((prev) => !prev)}
+                className="hidden lg:flex p-1.5 text-slate-400 hover:text-slate-700 rounded-xl hover:bg-slate-100 cursor-pointer"
+                title="Sembunyikan Sidebar / Tampilan Lebar"
+              >
+                <PanelLeftClose className="w-4 h-4" />
+              </button>
+            )}
+
+            {/* Close button on mobile */}
+            <button
+              onClick={() => setIsMobileOpen(false)}
+              className="lg:hidden p-1.5 text-slate-400 hover:text-slate-700 rounded-xl hover:bg-slate-100 cursor-pointer"
+              title="Tutup Menu"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
-        {/* 2-Role Access Selector (Admin vs Guru/GTK Piket) */}
+        {/* 4-Role Access Selector (Admin, Kepsek, Guru/GTK, Auditor BKD) */}
         <div className="p-3 mx-3 my-2 rounded-2xl bg-gradient-to-br from-slate-50 to-indigo-50/40 border border-slate-200/80 space-y-2">
           <div className="flex items-center justify-between">
             <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-              Mode Hak Akses (2 Level):
+              Hak Akses Role:
             </span>
-            <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-indigo-600 text-white uppercase tracking-wider">
-              {userRole === 'admin' ? 'Admin' : 'Piket'}
+            <span
+              className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider ${
+                userRole === 'kepala_sekolah'
+                  ? 'bg-amber-500 text-slate-950 font-black'
+                  : userRole === 'admin'
+                  ? 'bg-blue-600 text-white'
+                  : userRole === 'bkd_staff' || userRole === 'bkd'
+                  ? 'bg-emerald-600 text-white'
+                  : 'bg-indigo-600 text-white'
+              }`}
+            >
+              {userRole === 'kepala_sekolah'
+                ? 'Kepala Sekolah'
+                : userRole === 'admin'
+                ? 'Admin SIMPEG'
+                : userRole === 'bkd_staff' || userRole === 'bkd'
+                ? 'Auditor BKD'
+                : 'Guru / GTK'}
             </span>
           </div>
 
-          <div className="grid grid-cols-2 gap-1.5">
+          <div className="grid grid-cols-4 gap-1">
             <button
-              onClick={() => setUserRole('admin')}
-              className={`py-1.5 px-2 text-[11px] font-bold rounded-xl transition-all flex items-center justify-center space-x-1.5 cursor-pointer ${
+              onClick={() => {
+                setUserRole('admin');
+                setIsMobileOpen(false);
+              }}
+              className={`py-1.5 px-0.5 text-[9px] font-bold rounded-xl transition-all flex flex-col items-center justify-center space-y-0.5 cursor-pointer text-center ${
                 userRole === 'admin'
-                  ? 'bg-slate-900 text-white shadow-xs'
+                  ? 'bg-blue-600 text-white shadow-xs'
                   : 'bg-white/80 text-slate-600 hover:bg-white border border-slate-200'
               }`}
+              title="Administrator SIMPEG & Presensi"
             >
               <ShieldCheck className="w-3.5 h-3.5" />
-              <span>Admin / SIMPEG</span>
+              <span className="truncate w-full">Admin</span>
             </button>
             <button
-              onClick={() => setUserRole('piket')}
-              className={`py-1.5 px-2 text-[11px] font-bold rounded-xl transition-all flex items-center justify-center space-x-1.5 cursor-pointer ${
-                userRole === 'piket'
+              onClick={() => {
+                setUserRole('kepala_sekolah');
+                setIsMobileOpen(false);
+              }}
+              className={`py-1.5 px-0.5 text-[9px] font-bold rounded-xl transition-all flex flex-col items-center justify-center space-y-0.5 cursor-pointer text-center ${
+                userRole === 'kepala_sekolah'
+                  ? 'bg-amber-500 text-slate-950 font-black shadow-xs'
+                  : 'bg-white/80 text-slate-600 hover:bg-white border border-slate-200'
+              }`}
+              title="Kepala Sekolah / Pejabat Penilai Kinerja"
+            >
+              <Award className="w-3.5 h-3.5" />
+              <span className="truncate w-full">Kepsek</span>
+            </button>
+            <button
+              onClick={() => {
+                setUserRole('bkd_staff');
+                setIsMobileOpen(false);
+              }}
+              className={`py-1.5 px-0.5 text-[9px] font-bold rounded-xl transition-all flex flex-col items-center justify-center space-y-0.5 cursor-pointer text-center ${
+                userRole === 'bkd_staff' || userRole === 'bkd'
+                  ? 'bg-emerald-600 text-white shadow-xs'
+                  : 'bg-white/80 text-slate-600 hover:bg-white border border-slate-200'
+              }`}
+              title="Auditor / Staf BKD Pulau Taliabu"
+            >
+              <Building2 className="w-3.5 h-3.5" />
+              <span className="truncate w-full">BKD</span>
+            </button>
+            <button
+              onClick={() => {
+                setUserRole('teacher');
+                setIsMobileOpen(false);
+              }}
+              className={`py-1.5 px-0.5 text-[9px] font-bold rounded-xl transition-all flex flex-col items-center justify-center space-y-0.5 cursor-pointer text-center ${
+                userRole === 'teacher' || userRole === 'piket'
                   ? 'bg-indigo-600 text-white shadow-xs'
                   : 'bg-white/80 text-slate-600 hover:bg-white border border-slate-200'
               }`}
+              title="Guru / Tenaga Kependidikan"
             >
               <FileCheck2 className="w-3.5 h-3.5" />
-              <span>Guru/GTK Piket</span>
+              <span className="truncate w-full">Guru</span>
             </button>
           </div>
 
           <button
-            onClick={onTriggerSimulation}
+            onClick={() => {
+              onTriggerSimulation();
+              setIsMobileOpen(false);
+            }}
             className="w-full py-1.5 px-2 bg-indigo-600/10 hover:bg-indigo-600 hover:text-white text-indigo-700 rounded-xl text-[10px] font-bold transition-all flex items-center justify-center space-x-1.5 cursor-pointer border border-indigo-200/60"
             title="Kirim Simulasi Izin Baru untuk Ditinjau"
           >
@@ -342,25 +437,84 @@ export const Sidebar: React.FC<SidebarProps> = ({
           ))}
         </nav>
 
+        {/* PWA & Install App Widget */}
+        <div className="px-3 py-2 space-y-1.5 border-t border-slate-100 bg-slate-50/50">
+          <button
+            onClick={() => {
+              if (onOpenInstallModal) onOpenInstallModal();
+              setIsMobileOpen(false);
+            }}
+            className="w-full py-2 px-3 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white rounded-xl text-xs font-extrabold transition-all flex items-center justify-between shadow-xs cursor-pointer group"
+          >
+            <div className="flex items-center space-x-2">
+              <Download className="w-4 h-4 text-indigo-200 group-hover:animate-bounce" />
+              <span>Pasang / Unduh App</span>
+            </div>
+            <span className="text-[9px] uppercase px-1.5 py-0.2 bg-white/20 rounded-md font-bold">
+              PWA
+            </span>
+          </button>
+
+          <button
+            onClick={() => handleNavClick('config')}
+            className="w-full py-1.5 px-3 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 rounded-xl text-[11px] font-bold transition-all flex items-center justify-center space-x-1.5 cursor-pointer"
+          >
+            <Palette className="w-3.5 h-3.5 text-indigo-600" />
+            <span>Ganti Ikon & Logo Sekolah</span>
+          </button>
+        </div>
+
         {/* Footer School Info */}
         <div className="p-3 border-t border-slate-100 bg-slate-50/50 flex items-center justify-between text-xs">
           <div className="flex items-center space-x-2 min-w-0">
-            <div className="w-7 h-7 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-800 font-extrabold text-[10px] shrink-0">
-              {userRole === 'admin' ? 'ADM' : 'PKT'}
+            <div
+              className={`w-7 h-7 rounded-full flex items-center justify-center font-extrabold text-[10px] shrink-0 ${
+                userRole === 'kepala_sekolah'
+                  ? 'bg-amber-100 text-amber-950 border border-amber-400'
+                  : userRole === 'admin'
+                  ? 'bg-blue-100 text-blue-800'
+                  : userRole === 'bkd_staff' || userRole === 'bkd'
+                  ? 'bg-emerald-100 text-emerald-900 border border-emerald-300'
+                  : 'bg-indigo-100 text-indigo-800'
+              }`}
+            >
+              {userRole === 'kepala_sekolah'
+                ? 'KS'
+                : userRole === 'admin'
+                ? 'ADM'
+                : userRole === 'bkd_staff' || userRole === 'bkd'
+                ? 'BKD'
+                : 'GTK'}
             </div>
             <div className="min-w-0">
               <p className="font-bold text-slate-800 truncate text-[11px]">
-                {userRole === 'admin'
-                  ? (config.adminName || 'Admin SIMPEG / Kepsek')
-                  : 'Petugas Piket Harian'}
+                {userRole === 'kepala_sekolah'
+                  ? (config.principalName || 'Kepala Sekolah')
+                  : userRole === 'admin'
+                  ? (config.adminName || 'Admin SIMPEG')
+                  : userRole === 'bkd_staff' || userRole === 'bkd'
+                  ? 'Auditor BKD Pulau Taliabu'
+                  : 'Guru / Tenaga Pendidik'}
               </p>
               <p className="text-[9px] text-slate-400 truncate">
-                T.A {config.academicYear} • {config.semester}
+                {userRole === 'kepala_sekolah'
+                  ? 'Otoritas Pengesahan Eksekutif'
+                  : userRole === 'bkd_staff' || userRole === 'bkd'
+                  ? 'Pengawasan Disiplin & TPP ASN'
+                  : userRole === 'admin'
+                  ? 'Manajemen Sistem SIMPEG'
+                  : `T.A ${config.academicYear} • ${config.semester}`}
               </p>
             </div>
           </div>
 
-          <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+          {userRole === 'kepala_sekolah' ? (
+            <Award className="w-4 h-4 text-amber-600 shrink-0" />
+          ) : userRole === 'bkd_staff' || userRole === 'bkd' ? (
+            <Building2 className="w-4 h-4 text-emerald-600 shrink-0" />
+          ) : (
+            <ShieldCheck className="w-4 h-4 text-blue-600 shrink-0" />
+          )}
         </div>
       </aside>
     </>

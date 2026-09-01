@@ -1,18 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import {
-  APIProvider,
-  Map,
-  AdvancedMarker,
-  Pin,
-  InfoWindow,
-  useApiLoadingStatus,
-  APILoadingStatus,
-} from '@vis.gl/react-google-maps';
+import React, { useState, useEffect, useRef } from 'react';
+import L from 'leaflet';
 import { AttendanceRecord, SchoolConfig } from '../types';
-import { School, MapPin, User, Clock, CheckCircle2, AlertTriangle, Layers, Navigation, Compass } from 'lucide-react';
-
-const GOOGLE_MAPS_API_KEY =
-  ((import.meta as unknown as { env?: Record<string, string> }).env?.VITE_GOOGLE_MAPS_API_KEY as string) || '';
+import { School, MapPin, User, Clock, Compass } from 'lucide-react';
 
 interface AttendanceMapViewProps {
   records: AttendanceRecord[];
@@ -20,247 +9,20 @@ interface AttendanceMapViewProps {
   height?: string;
 }
 
-// Fallback Attendance Records Distribution Canvas
-const AttendanceDistributionFallback: React.FC<{
-  records: AttendanceRecord[];
-  config: SchoolConfig;
-  height: string;
-}> = ({ records, config, height }) => {
-  const locationRecords = records.filter(
-    (r) => r.location && typeof r.location.lat === 'number' && typeof r.location.lng === 'number'
-  );
-
-  return (
-    <div
-      className="relative w-full rounded-2xl bg-slate-900 text-white p-5 overflow-hidden flex flex-col justify-between"
-      style={{ height }}
-    >
-      <div className="absolute inset-0 opacity-20 pointer-events-none bg-[radial-gradient(#6366f1_1px,transparent_1px)] [background-size:16px_16px]" />
-
-      <div className="relative z-10 flex items-center justify-between text-xs">
-        <div className="flex items-center space-x-2 bg-slate-800/90 px-3 py-1.5 rounded-xl border border-slate-700">
-          <School className="w-4 h-4 text-indigo-400" />
-          <span className="font-bold text-slate-200">{config.schoolName}</span>
-          <span className="text-[10px] text-slate-400 font-mono">
-            ({config.schoolLat.toFixed(4)}, {config.schoolLng.toFixed(4)})
-          </span>
-        </div>
-
-        <div className="bg-slate-800/90 px-2.5 py-1 rounded-xl border border-slate-700 text-[10px] text-emerald-400 font-mono flex items-center space-x-1">
-          <Compass className="w-3 h-3 text-emerald-400" />
-          <span>Sebaran Koordinat Aktif ({locationRecords.length} Titik)</span>
-        </div>
-      </div>
-
-      {/* Visual radar cluster */}
-      <div className="relative z-10 my-auto flex items-center justify-center">
-        <div className="w-48 h-48 rounded-full border border-indigo-500/30 flex items-center justify-center relative">
-          <div className="w-32 h-32 rounded-full border border-emerald-500/40 bg-emerald-500/5 flex items-center justify-center relative">
-            <div className="w-16 h-16 rounded-full border border-indigo-400/50 bg-indigo-500/10 flex items-center justify-center">
-              <School className="w-6 h-6 text-indigo-400" />
-            </div>
-            {/* Sample scattered pins */}
-            {locationRecords.slice(0, 8).map((rec, i) => {
-              const angle = (i * 360) / Math.min(locationRecords.length, 8);
-              const dist = 35 + (i % 3) * 15;
-              const rad = (angle * Math.PI) / 180;
-              const x = Math.cos(rad) * dist;
-              const y = Math.sin(rad) * dist;
-              return (
-                <div
-                  key={rec.id}
-                  className="absolute w-3 h-3 rounded-full bg-emerald-400 border border-white shadow-sm transform -translate-x-1/2 -translate-y-1/2"
-                  style={{
-                    left: `calc(50% + ${x}px)`,
-                    top: `calc(50% + ${y}px)`,
-                  }}
-                  title={rec.personName}
-                />
-              );
-            })}
-          </div>
-        </div>
-      </div>
-
-      <div className="relative z-10 flex flex-wrap items-center justify-between gap-2 text-[11px] bg-slate-950/80 p-2.5 rounded-xl border border-slate-800">
-        <div className="flex items-center space-x-3 text-slate-300">
-          <span className="flex items-center space-x-1">
-            <span className="w-2 h-2 rounded-full bg-indigo-500" />
-            <span>Guru/ASN ({records.filter((r) => r.personType === 'teacher').length})</span>
-          </span>
-          <span className="flex items-center space-x-1">
-            <span className="w-2 h-2 rounded-full bg-emerald-400" />
-            <span>Siswa ({records.filter((r) => r.personType === 'student').length})</span>
-          </span>
-          <span className="flex items-center space-x-1">
-            <span className="w-2 h-2 rounded-full bg-amber-400" />
-            <span>Terlambat ({records.filter((r) => r.status === 'terlambat').length})</span>
-          </span>
-        </div>
-        <span className="text-[10px] text-slate-400">
-          Radius Geofence Sekolah: {config.radiusMeter}m
-        </span>
-      </div>
-    </div>
-  );
-};
-
-const InnerMapCanvas: React.FC<AttendanceMapViewProps & {
-  locationRecords: AttendanceRecord[];
-  filterType: 'all' | 'teacher' | 'student';
-  mapType: 'roadmap' | 'satellite' | 'hybrid';
-}> = ({ locationRecords, config, mapType, height = '480px' }) => {
-  const [selectedRecord, setSelectedRecord] = useState<AttendanceRecord | null>(null);
-
-  return (
-    <div className="relative w-full" style={{ height }}>
-      <Map
-        defaultCenter={{ lat: config.schoolLat, lng: config.schoolLng }}
-        defaultZoom={15}
-        mapTypeId={mapType}
-        mapId="DEMO_MAP_ID"
-        internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
-        className="w-full h-full"
-        disableDefaultUI={false}
-      >
-        {/* School Center Marker */}
-        <AdvancedMarker
-          position={{ lat: config.schoolLat, lng: config.schoolLng }}
-          title={config.schoolName}
-        >
-          <div className="p-1 bg-white rounded-full shadow-lg border-2 border-indigo-600 flex items-center justify-center">
-            <School className="w-5 h-5 text-indigo-700" />
-          </div>
-        </AdvancedMarker>
-
-        {/* Attendance Markers */}
-        {locationRecords.map((rec) => {
-          const isTeacher = rec.personType === 'teacher';
-          const isLate = rec.status === 'terlambat';
-          const pinColor = isLate ? '#F59E0B' : isTeacher ? '#7C3AED' : '#2563EB';
-
-          return (
-            <AdvancedMarker
-              key={rec.id}
-              position={{ lat: rec.location!.lat, lng: rec.location!.lng }}
-              title={`${rec.personName} (${rec.time})`}
-              onClick={() => setSelectedRecord(rec)}
-            >
-              <Pin
-                background={pinColor}
-                borderColor="#FFFFFF"
-                glyphColor="#FFFFFF"
-                scale={0.9}
-              />
-            </AdvancedMarker>
-          );
-        })}
-
-        {/* InfoWindow for Selected Record */}
-        {selectedRecord && selectedRecord.location && (
-          <InfoWindow
-            position={{
-              lat: selectedRecord.location.lat,
-              lng: selectedRecord.location.lng,
-            }}
-            onCloseClick={() => setSelectedRecord(null)}
-          >
-            <div className="p-2 text-xs space-y-2 max-w-xs">
-              <div className="flex items-center space-x-2 border-b border-slate-100 pb-1.5">
-                {selectedRecord.photoUrl ? (
-                  <img
-                    src={selectedRecord.photoUrl}
-                    alt="Selfie"
-                    className="w-9 h-9 rounded-lg object-cover border border-slate-200"
-                  />
-                ) : (
-                  <div className="w-9 h-9 rounded-lg bg-slate-100 flex items-center justify-center text-slate-500 font-bold">
-                    <User className="w-5 h-5" />
-                  </div>
-                )}
-                <div>
-                  <h4 className="font-extrabold text-slate-900 text-xs leading-tight">
-                    {selectedRecord.personName}
-                  </h4>
-                  <p className="text-[10px] text-slate-500">
-                    {selectedRecord.personType === 'teacher' ? 'Guru / ASN' : 'Peserta Didik'} • {selectedRecord.identifier}
-                  </p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-1 text-[11px]">
-                <div className="bg-slate-50 p-1.5 rounded-lg">
-                  <span className="text-slate-400 block text-[9px]">Waktu Presensi</span>
-                  <span className="font-bold text-slate-800 flex items-center space-x-1">
-                    <Clock className="w-3 h-3 text-slate-400 inline" />
-                    <span>{selectedRecord.time} WIB</span>
-                  </span>
-                </div>
-                <div className="bg-slate-50 p-1.5 rounded-lg">
-                  <span className="text-slate-400 block text-[9px]">Status</span>
-                  <span
-                    className={`font-bold capitalize ${
-                      selectedRecord.status === 'hadir'
-                        ? 'text-emerald-700'
-                        : selectedRecord.status === 'terlambat'
-                        ? 'text-amber-700'
-                        : 'text-indigo-700'
-                    }`}
-                  >
-                    {selectedRecord.status} ({selectedRecord.type})
-                  </span>
-                </div>
-              </div>
-
-              <p className="text-[10px] text-slate-600">
-                📍 {selectedRecord.location.address || 'Lokasi Terverifikasi'}
-              </p>
-              <div className="text-[10px] font-mono text-slate-400 flex items-center justify-between">
-                <span>Radius: {selectedRecord.location.distanceMeter}m</span>
-                <span>{selectedRecord.location.inRadius ? '✅ Dalam Radius' : '⚠️ Luar Radius'}</span>
-              </div>
-            </div>
-          </InfoWindow>
-        )}
-      </Map>
-    </div>
-  );
-};
-
-const SafeAttendanceMapContainer: React.FC<AttendanceMapViewProps & {
-  locationRecords: AttendanceRecord[];
-  filterType: 'all' | 'teacher' | 'student';
-  mapType: 'roadmap' | 'satellite' | 'hybrid';
-}> = (props) => {
-  const status = useApiLoadingStatus();
-
-  if (status === APILoadingStatus.LOADED) {
-    return <InnerMapCanvas {...props} />;
-  }
-
-  return (
-    <AttendanceDistributionFallback
-      records={props.records}
-      config={props.config}
-      height={props.height || '480px'}
-    />
-  );
-};
-
 export const AttendanceMapView: React.FC<AttendanceMapViewProps> = ({
   records,
   config,
   height = '480px',
 }) => {
   const [filterType, setFilterType] = useState<'all' | 'teacher' | 'student'>('all');
-  const [mapType, setMapType] = useState<'roadmap' | 'satellite' | 'hybrid'>('roadmap');
-  const [authFailed, setAuthFailed] = useState(false);
+  const [mapType, setMapType] = useState<'street' | 'satellite'>('street');
+  const [selectedRecord, setSelectedRecord] = useState<AttendanceRecord | null>(null);
 
-  useEffect(() => {
-    const handleAuthError = () => setAuthFailed(true);
-    window.addEventListener('gm_authFailure', handleAuthError);
-    return () => window.removeEventListener('gm_authFailure', handleAuthError);
-  }, []);
+  const mapContainerRef = useRef<HTMLDivElement>(null);
+  const mapInstanceRef = useRef<L.Map | null>(null);
+  const tileLayerRef = useRef<L.TileLayer | null>(null);
+  const layersGroupRef = useRef<L.LayerGroup | null>(null);
+  const resizeTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const locationRecords = records.filter(
     (r) =>
@@ -269,6 +31,215 @@ export const AttendanceMapView: React.FC<AttendanceMapViewProps> = ({
       typeof r.location.lng === 'number' &&
       (filterType === 'all' || r.personType === filterType)
   );
+
+  const safeRadius = Math.max(
+    1,
+    Number(config.maxRadiusMeters) ||
+      Number((config as unknown as { radiusMeter?: number }).radiusMeter) ||
+      80
+  );
+  const safeSchoolLat = typeof config.schoolLat === 'number' && !isNaN(config.schoolLat) ? config.schoolLat : -1.8682;
+  const safeSchoolLng = typeof config.schoolLng === 'number' && !isNaN(config.schoolLng) ? config.schoolLng : 124.4172;
+
+  // Initialize Map Once on mount
+  useEffect(() => {
+    if (!mapContainerRef.current) return;
+
+    if ((mapContainerRef.current as unknown as { _leaflet_id?: number })._leaflet_id) {
+      return;
+    }
+
+    try {
+      const map = L.map(mapContainerRef.current, {
+        zoomControl: true,
+        attributionControl: false,
+      }).setView([safeSchoolLat, safeSchoolLng], 15);
+
+      mapInstanceRef.current = map;
+
+      const tileUrl =
+        mapType === 'satellite'
+          ? 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
+          : 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+
+      const tileLayer = L.tileLayer(tileUrl, { maxZoom: 19 }).addTo(map);
+      tileLayerRef.current = tileLayer;
+
+      const layersGroup = L.layerGroup().addTo(map);
+      layersGroupRef.current = layersGroup;
+
+      resizeTimerRef.current = setTimeout(() => {
+        if (mapInstanceRef.current && (mapInstanceRef.current as unknown as { _mapPane?: HTMLElement })._mapPane) {
+          try {
+            map.invalidateSize();
+          } catch {
+            // ignore
+          }
+        }
+      }, 200);
+    } catch (err) {
+      console.warn('Failed to initialize Leaflet attendance map:', err);
+    }
+
+    return () => {
+      if (resizeTimerRef.current) {
+        clearTimeout(resizeTimerRef.current);
+        resizeTimerRef.current = null;
+      }
+      if (mapInstanceRef.current) {
+        try {
+          mapInstanceRef.current.remove();
+        } catch {
+          // ignore
+        }
+        mapInstanceRef.current = null;
+      }
+      layersGroupRef.current = null;
+      tileLayerRef.current = null;
+    };
+  }, []); // Mount once
+
+  // Update Tile Layer when mapType changes
+  useEffect(() => {
+    if (!tileLayerRef.current) return;
+    const tileUrl =
+      mapType === 'satellite'
+        ? 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
+        : 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+
+    tileLayerRef.current.setUrl(tileUrl);
+  }, [mapType]);
+
+  // Update Markers and Circles when records or config changes
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    const layersGroup = layersGroupRef.current;
+    if (!map || !layersGroup || !(map as unknown as { _mapPane?: HTMLElement })._mapPane) return;
+
+    try {
+      layersGroup.clearLayers();
+
+      // School center marker
+      const schoolIcon = L.divIcon({
+        className: 'custom-school-pin',
+        html: `
+          <div style="
+            background: #4f46e5;
+            color: white;
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 4px 14px rgba(79, 70, 229, 0.5);
+            border: 2px solid white;
+            font-size: 16px;
+          ">🏫</div>
+        `,
+        iconSize: [36, 36],
+        iconAnchor: [18, 18],
+      });
+
+      const schoolMarker = L.marker([safeSchoolLat, safeSchoolLng], {
+        icon: schoolIcon,
+      });
+
+      schoolMarker.bindPopup(`
+        <div style="font-family: sans-serif; padding: 2px; font-size: 12px;">
+          <strong style="color: #4338ca; font-size: 13px;">${config.schoolName || 'Pusat Sekolah'}</strong><br/>
+          <span style="color: #6b7280; font-size: 11px;">Pusat Geofence Presensi Resmi</span><br/>
+          <div style="margin-top: 4px; background: #e0e7ff; color: #3730a3; padding: 2px 6px; border-radius: 4px; font-weight: bold; font-size: 10px; display: inline-block;">
+            Radius: ${safeRadius} Meter
+          </div>
+        </div>
+      `);
+
+      layersGroup.addLayer(schoolMarker);
+
+      // School Geofence Circle
+      const schoolCircle = L.circle([safeSchoolLat, safeSchoolLng], {
+        color: '#4f46e5',
+        fillColor: '#818cf8',
+        fillOpacity: 0.15,
+        radius: safeRadius,
+        weight: 2,
+        dashArray: '5, 5',
+      });
+
+      layersGroup.addLayer(schoolCircle);
+
+      // Add user attendance pins
+      const markers: L.Marker[] = [schoolMarker];
+
+      locationRecords.forEach((rec) => {
+        if (!rec.location || isNaN(rec.location.lat) || isNaN(rec.location.lng)) return;
+        const isTeacher = rec.personType === 'teacher';
+        const isLate = rec.status === 'terlambat';
+        const pinBg = isLate ? '#f59e0b' : isTeacher ? '#7c3aed' : '#2563eb';
+        const pinEmoji = isTeacher ? '👨‍🏫' : '🎒';
+
+        const userIcon = L.divIcon({
+          className: 'custom-attendance-pin',
+          html: `
+            <div style="
+              background: ${pinBg};
+              color: white;
+              width: 28px;
+              height: 28px;
+              border-radius: 50%;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              box-shadow: 0 3px 10px rgba(0,0,0,0.3);
+              border: 2px solid white;
+              font-size: 13px;
+            ">${pinEmoji}</div>
+          `,
+          iconSize: [28, 28],
+          iconAnchor: [14, 14],
+        });
+
+        const m = L.marker([rec.location.lat, rec.location.lng], { icon: userIcon });
+
+        m.bindPopup(`
+          <div style="font-family: sans-serif; min-width: 170px; padding: 3px; font-size: 11px;">
+            <strong style="color: #0f172a; font-size: 12px; display: block; margin-bottom: 2px;">${rec.personName}</strong>
+            <span style="color: #64748b; font-size: 10px; display: block;">${rec.personType === 'teacher' ? 'Guru / Pegawai' : 'Peserta Didik'} • ${rec.identifier}</span>
+            <div style="margin-top: 4px; display: flex; justify-content: space-between; align-items: center;">
+              <span style="background: #f1f5f9; padding: 2px 5px; border-radius: 4px; font-weight: bold; font-size: 10px;">⏰ ${rec.time} WITA</span>
+              <span style="font-weight: bold; font-size: 10px; color: ${isLate ? '#b45309' : '#047857'}; text-transform: uppercase;">${rec.status}</span>
+            </div>
+            <div style="margin-top: 4px; font-size: 10px; color: #475569;">
+              📍 Jarak: ${rec.location.distanceMeter}m ${rec.location.inRadius ? '(✅ Dalam Radius)' : '(⚠️ Luar Radius)'}
+            </div>
+          </div>
+        `);
+
+        m.on('click', () => {
+          setSelectedRecord(rec);
+        });
+
+        layersGroup.addLayer(m);
+        markers.push(m);
+      });
+
+      if (markers.length > 1) {
+        const group = L.featureGroup(markers);
+        map.fitBounds(group.getBounds().pad(0.2), { animate: false });
+      } else {
+        map.panTo([safeSchoolLat, safeSchoolLng], { animate: false });
+      }
+    } catch (err) {
+      console.warn('Error updating attendance map layers:', err);
+    }
+  }, [
+    safeSchoolLat,
+    safeSchoolLng,
+    config.schoolName,
+    safeRadius,
+    locationRecords,
+  ]);
 
   return (
     <div className="bg-white rounded-3xl border border-slate-200 shadow-xs overflow-hidden flex flex-col">
@@ -325,17 +296,17 @@ export const AttendanceMapView: React.FC<AttendanceMapViewProps> = ({
 
           <div className="flex items-center space-x-1 bg-white p-1 rounded-xl border border-slate-200 text-xs">
             <button
-              onClick={() => setMapType('roadmap')}
+              onClick={() => setMapType('street')}
               className={`px-2 py-1 rounded-lg font-bold transition-all cursor-pointer ${
-                mapType === 'roadmap' ? 'bg-slate-800 text-white' : 'text-slate-600'
+                mapType === 'street' ? 'bg-slate-800 text-white' : 'text-slate-600'
               }`}
             >
               Peta
             </button>
             <button
-              onClick={() => setMapType('hybrid')}
+              onClick={() => setMapType('satellite')}
               className={`px-2 py-1 rounded-lg font-bold transition-all cursor-pointer ${
-                mapType === 'hybrid' ? 'bg-slate-800 text-white' : 'text-slate-600'
+                mapType === 'satellite' ? 'bg-slate-800 text-white' : 'text-slate-600'
               }`}
             >
               Satelit
@@ -344,26 +315,33 @@ export const AttendanceMapView: React.FC<AttendanceMapViewProps> = ({
         </div>
       </div>
 
-      {/* Map Canvas / Fallback */}
-      {!GOOGLE_MAPS_API_KEY || authFailed ? (
-        <AttendanceDistributionFallback
-          records={records}
-          config={config}
-          height={height}
-        />
-      ) : (
-        <APIProvider apiKey={GOOGLE_MAPS_API_KEY} libraries={['places', 'marker', 'geometry']}>
-          <SafeAttendanceMapContainer
-            records={records}
-            config={config}
-            height={height}
-            locationRecords={locationRecords}
-            filterType={filterType}
-            mapType={mapType}
-          />
-        </APIProvider>
-      )}
+      {/* Map Target DOM */}
+      <div className="relative w-full z-0" style={{ height }}>
+        <div ref={mapContainerRef} className="w-full h-full z-0" />
+
+        {/* Floating summary badge */}
+        <div className="absolute bottom-3 left-3 right-3 z-1000 flex flex-wrap items-center justify-between gap-2 text-[11px] bg-slate-900/90 backdrop-blur-xs text-white p-2.5 rounded-xl border border-slate-700 shadow-lg pointer-events-none">
+          <div className="flex items-center space-x-3 pointer-events-auto">
+            <span className="flex items-center space-x-1">
+              <span className="w-2.5 h-2.5 rounded-full bg-purple-500" />
+              <span>Guru/ASN ({records.filter((r) => r.personType === 'teacher' && r.location).length})</span>
+            </span>
+            <span className="flex items-center space-x-1">
+              <span className="w-2.5 h-2.5 rounded-full bg-blue-500" />
+              <span>Siswa ({records.filter((r) => r.personType === 'student' && r.location).length})</span>
+            </span>
+            <span className="flex items-center space-x-1">
+              <span className="w-2.5 h-2.5 rounded-full bg-amber-400" />
+              <span>Terlambat ({records.filter((r) => r.status === 'terlambat' && r.location).length})</span>
+            </span>
+          </div>
+          <span className="text-[10px] text-slate-300 font-mono">
+            Radius Sekolah: {safeRadius}m
+          </span>
+        </div>
+      </div>
     </div>
   );
 };
+
 

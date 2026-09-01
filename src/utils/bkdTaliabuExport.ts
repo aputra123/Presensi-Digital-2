@@ -184,13 +184,15 @@ export function pairAttendanceByDateAndPerson(
   return result.sort((a, b) => b.date.localeCompare(a.date));
 }
 
+export type BkdExportPeriod = 'Harian' | 'Mingguan' | 'Bulanan' | 'Semesteran' | 'Tahunan';
+
 /**
  * Generate CSV with explicit separate columns for Sesi Masuk and Sesi Pulang
  */
 export function generateBkdSeparateColumnsCsv(
   pairedData: PairedDailyAttendance[],
   config: SchoolConfig,
-  reportType: 'Harian' | 'Mingguan' | 'Bulanan' = 'Harian'
+  reportType: BkdExportPeriod = 'Harian'
 ): string {
   const headers = [
     'No',
@@ -246,6 +248,9 @@ export function generateBkdSeparateColumnsCsv(
     `"REKAPITULASI PRESENSI ASN & GTK - BKD KABUPATEN PULAU TALIABU"`,
     `"Instansi: ${config.schoolName} | NPSN: ${config.npsn}"`,
     `"Jenis Laporan: Rekap ${reportType} Pukul 15.00 WIT"`,
+    `"Drive Folder: ${config.bkdDriveUrl || '-'}"`,
+    `"Email BKD: ${config.bkdEmail || '-'}"`,
+    `"WhatsApp BKD: ${config.bkdWhatsApp || '-'}"`,
     `"Waktu Ekspor: ${new Date().toLocaleString('id-ID')} WIT"`,
     '',
   ];
@@ -259,7 +264,7 @@ export function generateBkdSeparateColumnsCsv(
 export function downloadBkdCsvFile(
   pairedData: PairedDailyAttendance[],
   config: SchoolConfig,
-  reportType: 'Harian' | 'Mingguan' | 'Bulanan' = 'Harian'
+  reportType: BkdExportPeriod = 'Harian'
 ) {
   const csvContent = generateBkdSeparateColumnsCsv(pairedData, config, reportType);
   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -282,7 +287,7 @@ export function downloadBkdCsvFile(
 export function formatBkdWhatsAppMessage(
   pairedData: PairedDailyAttendance[],
   config: SchoolConfig,
-  reportType: 'Harian' | 'Mingguan' | 'Bulanan' = 'Harian'
+  reportType: BkdExportPeriod = 'Harian'
 ): string {
   const todayDate = new Date().toLocaleDateString('id-ID', {
     weekday: 'long',
@@ -296,25 +301,27 @@ export function formatBkdWhatsAppMessage(
   const totalIzinSakit = pairedData.filter((d) => d.statusAkhir === 'IZIN' || d.statusAkhir === 'SAKIT').length;
   const totalAlpa = pairedData.filter((d) => d.statusAkhir === 'ALPA').length;
 
-  const driveFolderUrl = `https://drive.google.com/drive/folders/bkd-pulau-taliabu-${config.npsn}-presensi`;
+  const driveFolderUrl = config.bkdDriveUrl || `https://drive.google.com/drive/folders/bkd-pulau-taliabu-${config.npsn}-presensi`;
   const sheetsLiveUrl = `https://docs.google.com/spreadsheets/d/e/2PACX-1vTaliabu_Rekap_${config.npsn}/pubhtml`;
 
-  let msg = `*LAPORAN OTOMATIS PRESENSI KEPEGAWAIAN - BKD KAB. PULAU TALIABU*\n`;
+  let msg = `*LAPORAN OTOMATIS PRESENSI KHUSUS ASN - BKD KAB. PULAU TALIABU*\n`;
   msg += `⏰ Jadwal Pengiriman: *Setiap Jam 15.00 WIT (${reportType.toUpperCase()})*\n`;
   msg += `--------------------------------------------------\n`;
   msg += `🏛️ *Instansi*       : ${config.schoolName}\n`;
   msg += `🆔 *NPSN*           : ${config.npsn}\n`;
   msg += `📅 *Periode/Tanggal*: ${todayDate}\n`;
-  msg += `👥 *Total Personil* : ${pairedData.length} Orang\n`;
+  msg += `👥 *Total ASN*      : ${pairedData.length} Pegawai (PNS & PPPK)\n`;
   msg += `--------------------------------------------------\n`;
   msg += `📊 *RINGKASAN KEHADIRAN (15:00 WIT)*:\n`;
-  msg += `✅ Hadir Lengkap : ${totalHadir} Orang\n`;
-  msg += `⚠️ Terlambat     : ${totalTerlambat} Orang\n`;
-  msg += `📋 Izin / Sakit  : ${totalIzinSakit} Orang\n`;
-  msg += `❌ Alpa / Nihil  : ${totalAlpa} Orang\n`;
+  msg += `✅ Hadir Lengkap : ${totalHadir} Pegawai\n`;
+  msg += `⚠️ Terlambat     : ${totalTerlambat} Pegawai\n`;
+  msg += `📋 Izin / Sakit  : ${totalIzinSakit} Pegawai\n`;
+  msg += `❌ Alpa / Nihil  : ${totalAlpa} Pegawai\n`;
   msg += `--------------------------------------------------\n`;
-  msg += `📁 *DOKUMENTASI FOTO WAJAH & GPS (GOOGLE DRIVE)*:\n`;
+  msg += `📁 *LINK GOOGLE DRIVE BKD (FOTO WAJAH & REKAP)*:\n`;
   msg += `🔗 ${driveFolderUrl}\n\n`;
+  msg += `✉️ *EMAIL BKD*      : ${config.bkdEmail || 'bkd.taliabu@pulautaliabukab.go.id'}\n`;
+  msg += `📱 *WHATSAPP BKD*   : +${(config.bkdWhatsApp || '6282291882341').replace(/[^0-9]/g, '')}\n`;
   msg += `📑 *GOOGLE SHEETS REKAP (KOLOM MASUK & PULANG TERPISAH)*:\n`;
   msg += `🔗 ${sheetsLiveUrl}\n`;
   msg += `--------------------------------------------------\n`;
@@ -322,12 +329,12 @@ export function formatBkdWhatsAppMessage(
 
   pairedData.slice(0, 5).forEach((item, i) => {
     msg += `${i + 1}. *${item.personName}* (${item.identifier})\n`;
-    msg += `   • Masuk : ${item.jamMasuk} | Foto Drive: ${item.fotoMasukDriveUrl.substring(0, 35)}...\n`;
+    msg += `   • Masuk : ${item.jamMasuk} | Foto: ${item.fotoMasukDriveUrl.substring(0, 32)}...\n`;
     msg += `   • Pulang: ${item.jamPulang} | Total: ${item.totalJamKerja}\n`;
   });
 
   if (pairedData.length > 5) {
-    msg += `   ...dan ${pairedData.length - 5} personil lainnya terlampir di file CSV/Sheets.\n`;
+    msg += `   ...dan ${pairedData.length - 5} pegawai ASN lainnya terlampir di file CSV/Sheets.\n`;
   }
 
   msg += `--------------------------------------------------\n`;

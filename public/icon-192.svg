@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="192" height="192">
+  <defs>
+    <linearGradient id="bgGrad192" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#312e81" />
+      <stop offset="50%" stop-color="#4338ca" />
+      <stop offset="100%" stop-color="#1e1b4b" />
+    </linearGradient>
+    <linearGradient id="goldGrad192" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fef08a" />
+      <stop offset="50%" stop-color="#eab308" />
+      <stop offset="100%" stop-color="#ca8a04" />
+    </linearGradient>
+  </defs>
+
+  <rect width="512" height="512" rx="112" fill="url(#bgGrad192)" />
+  <circle cx="256" cy="256" r="210" fill="none" stroke="url(#goldGrad192)" stroke-width="8" stroke-dasharray="12 8" opacity="0.9" />
+
+  <g>
+    <!-- Roof -->
+    <path d="M256 110 L370 170 L142 170 Z" fill="url(#goldGrad192)" />
+    <!-- Pillars -->
+    <rect x="162" y="180" width="22" height="110" rx="4" fill="#ffffff" />
+    <rect x="214" y="180" width="22" height="110" rx="4" fill="#ffffff" />
+    <rect x="276" y="180" width="22" height="110" rx="4" fill="#ffffff" />
+    <rect x="328" y="180" width="22" height="110" rx="4" fill="#ffffff" />
+
+    <!-- Base -->
+    <rect x="135" y="295" width="242" height="18" rx="4" fill="url(#goldGrad192)" />
+    <rect x="120" y="318" width="272" height="16" rx="4" fill="#ffffff" />
+
+    <!-- Checkmark Badge -->
+    <circle cx="256" cy="380" r="46" fill="#10b981" stroke="#ffffff" stroke-width="5" />
+    <path d="M238 380 L250 392 L276 366" fill="none" stroke="#ffffff" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" />
+  </g>
+</svg>

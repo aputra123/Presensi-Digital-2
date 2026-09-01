@@ -1,4 +1,5 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useMemo } from 'react';
+import * as XLSX from 'xlsx';
 import {
   Briefcase,
   Plus,
@@ -19,17 +20,46 @@ import {
   Image as ImageIcon,
   Download,
   ScanFace,
+  ArrowUp,
+  ArrowDown,
+  ArrowUpDown,
+  LayoutGrid,
+  List,
+  QrCode,
+  Award,
+  FileText,
 } from 'lucide-react';
-import { Teacher, EmploymentStatus, ActiveTab } from '../types';
+import { Teacher, EmploymentStatus, ActiveTab, AttendanceRecord, SchoolConfig } from '../types';
 import { formatDriveUrl, downloadCsv } from '../utils/soundAndDate';
+import { TeacherQrCodeModal } from './TeacherQrCodeModal';
+import { TeacherPerformanceReportModal } from './TeacherPerformanceReportModal';
 
 interface TeacherManagementTabProps {
   teachers?: Teacher[];
+  records?: AttendanceRecord[];
+  config?: SchoolConfig;
   onAddTeacher: (teacher: Teacher) => void;
   onUpdateTeacher: (teacher: Teacher) => void;
   onDeleteTeacher: (id: string) => void;
   setActiveTab: (tab: ActiveTab) => void;
 }
+
+const DEFAULT_SCHOOL_CONFIG: SchoolConfig = {
+  schoolName: 'SMP NEGERI 4 SATU ATAP TALIABU BARAT',
+  npsn: '69989028',
+  address: 'Desa Pancoran, Kec. Taliabu Barat, Kab. Pulau Taliabu, Maluku Utara',
+  principalName: 'La Ode Aliudin, S.Pd',
+  principalNip: '197805122005011008',
+  academicYear: '2026/2027',
+  semester: 'Ganjil',
+  checkInStart: '06:30',
+  checkInDeadline: '07:30',
+  checkOutStart: '14:00',
+  schoolLat: -1.9542,
+  schoolLng: 124.3821,
+  maxRadiusMeters: 250,
+  logoUrl: '',
+};
 
 const PRESET_AVATARS = [
   { label: 'ASN Pria 1', url: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=300&q=80' },
@@ -42,6 +72,8 @@ const PRESET_AVATARS = [
 
 export const TeacherManagementTab: React.FC<TeacherManagementTabProps> = ({
   teachers = [],
+  records = [],
+  config = DEFAULT_SCHOOL_CONFIG,
   onAddTeacher,
   onUpdateTeacher,
   onDeleteTeacher,
@@ -50,9 +82,16 @@ export const TeacherManagementTab: React.FC<TeacherManagementTabProps> = ({
   const safeTeachers = teachers || [];
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedStatus, setSelectedStatus] = useState<string>('ALL');
+  const [sortField, setSortField] = useState<'name' | 'nip' | 'employmentStatus' | 'subject' | 'role' | 'phone'>('name');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+  const [viewMode, setViewMode] = useState<'table' | 'grid'>('table');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingTeacher, setEditingTeacher] = useState<Teacher | null>(null);
+  const [isQrModalOpen, setIsQrModalOpen] = useState(false);
+  const [selectedQrTeacher, setSelectedQrTeacher] = useState<Teacher | null>(null);
+  const [isPerformanceModalOpen, setIsPerformanceModalOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const excelImportRef = useRef<HTMLInputElement>(null);
 
   // Form State
   const [formData, setFormData] = useState<Partial<Teacher>>({
@@ -71,25 +110,56 @@ export const TeacherManagementTab: React.FC<TeacherManagementTabProps> = ({
 
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
-  const filteredTeachers = safeTeachers.filter((t) => {
-    const matchesSearch =
-      t.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      t.nip.includes(searchQuery) ||
-      (t.nuptk && t.nuptk.includes(searchQuery)) ||
-      t.subject.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      t.role.toLowerCase().includes(searchQuery.toLowerCase());
-
-    let matchesStatus = true;
-    if (selectedStatus !== 'ALL') {
-      if (selectedStatus === 'PPPK_ALL') {
-        matchesStatus = t.employmentStatus === 'PPPK' || t.employmentStatus === 'PPPK_PW';
-      } else {
-        matchesStatus = t.employmentStatus === selectedStatus;
-      }
+  // Instant Sort Handler
+  const handleSort = (field: 'name' | 'nip' | 'employmentStatus' | 'subject' | 'role' | 'phone') => {
+    if (sortField === field) {
+      setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortField(field);
+      setSortDirection('asc');
     }
+  };
 
-    return matchesSearch && matchesStatus;
-  });
+  // Reactive Memoized Filter & Sort
+  const filteredTeachers = useMemo(() => {
+    return safeTeachers
+      .filter((t) => {
+        const matchesSearch =
+          t.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          t.nip.includes(searchQuery) ||
+          (t.nuptk && t.nuptk.includes(searchQuery)) ||
+          t.subject.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          t.role.toLowerCase().includes(searchQuery.toLowerCase());
+
+        let matchesStatus = true;
+        if (selectedStatus !== 'ALL') {
+          if (selectedStatus === 'PPPK_ALL') {
+            matchesStatus = t.employmentStatus === 'PPPK' || t.employmentStatus === 'PPPK_PW';
+          } else {
+            matchesStatus = t.employmentStatus === selectedStatus;
+          }
+        }
+
+        return matchesSearch && matchesStatus;
+      })
+      .sort((a, b) => {
+        let cmp = 0;
+        if (sortField === 'name') {
+          cmp = a.name.localeCompare(b.name, 'id');
+        } else if (sortField === 'nip') {
+          cmp = a.nip.localeCompare(b.nip);
+        } else if (sortField === 'employmentStatus') {
+          cmp = a.employmentStatus.localeCompare(b.employmentStatus);
+        } else if (sortField === 'subject') {
+          cmp = a.subject.localeCompare(b.subject, 'id');
+        } else if (sortField === 'role') {
+          cmp = a.role.localeCompare(b.role, 'id');
+        } else if (sortField === 'phone') {
+          cmp = a.phone.localeCompare(b.phone);
+        }
+        return sortDirection === 'asc' ? cmp : -cmp;
+      });
+  }, [safeTeachers, searchQuery, selectedStatus, sortField, sortDirection]);
 
   const handleOpenAddModal = () => {
     setEditingTeacher(null);
@@ -185,6 +255,103 @@ export const TeacherManagementTab: React.FC<TeacherManagementTabProps> = ({
     setIsModalOpen(false);
   };
 
+  const handleDownloadTemplate = () => {
+    const templateHeaders = [
+      'Nama Lengkap',
+      'NIP',
+      'NUPTK',
+      'Status Kepegawaian (PNS/PPPK/PPPK_PW/HONORER)',
+      'Mata Pelajaran',
+      'Tugas / Jabatan',
+      'Jenis Kelamin (L/P)',
+      'No HP/WhatsApp',
+      'Email',
+      'Departemen / Unit',
+    ];
+    const sampleRows = [
+      ['Drs. Muhammad Aris, M.Pd', '197508142000031002', '1234567890123456', 'PNS', 'Matematika', 'Wakasek Kurikulum', 'L', '081234567890', 'aris@sekolah.sch.id', 'Kurikulum & Pengajaran'],
+      ['Nurul Hidayah, S.Pd', '198810202022212005', '9876543210987654', 'PPPK', 'Bahasa Indonesia', 'Guru Mata Pelajaran', 'P', '081234567891', 'nurul@sekolah.sch.id', 'Bahasa & Sastra'],
+    ];
+
+    const worksheet = XLSX.utils.aoa_to_sheet([templateHeaders, ...sampleRows]);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Template GTK');
+    XLSX.writeFile(workbook, 'Template_Import_Guru_GTK.xlsx');
+  };
+
+  const handleImportExcelFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const bstr = evt.target?.result;
+        const wb = XLSX.read(bstr, { type: 'binary' });
+        const wsName = wb.SheetNames[0];
+        const ws = wb.Sheets[wsName];
+        const data = XLSX.utils.sheet_to_json<any>(ws, { header: 1 });
+
+        if (data.length < 2) {
+          alert('File tidak berisi data yang cukup!');
+          return;
+        }
+
+        let addedCount = 0;
+        for (let i = 1; i < data.length; i++) {
+          const row = data[i];
+          if (!row || !row[0] || !row[1]) continue;
+
+          const name = String(row[0]).trim();
+          const nip = String(row[1]).trim();
+          const nuptk = row[2] ? String(row[2]).trim() : '';
+          const rawStatus = row[3] ? String(row[3]).trim().toUpperCase() : 'PNS';
+          let employmentStatus: EmploymentStatus = 'PNS';
+          if (rawStatus.includes('PPPK_PW') || rawStatus.includes('PW')) employmentStatus = 'PPPK_PW';
+          else if (rawStatus.includes('PPPK')) employmentStatus = 'PPPK';
+          else if (rawStatus.includes('HONOR')) employmentStatus = 'HONORER';
+
+          const subject = row[4] ? String(row[4]).trim() : 'Guru Mata Pelajaran';
+          const role = row[5] ? String(row[5]).trim() : 'Guru';
+          const gender = row[6] && String(row[6]).toUpperCase().includes('P') ? 'P' : 'L';
+          const phone = row[7] ? String(row[7]).trim() : '';
+          const email = row[8] ? String(row[8]).trim() : `${name.toLowerCase().replace(/\s+/g, '.')}@sekolah.sch.id`;
+          const department = row[9] ? String(row[9]).trim() : 'Kurikulum & Pengajaran';
+
+          const newTeacher: Teacher = {
+            id: `tch_${Date.now()}_${i}`,
+            name,
+            nip,
+            nuptk,
+            employmentStatus,
+            subject,
+            role,
+            gender,
+            phone,
+            email,
+            department,
+            avatar: gender === 'P'
+              ? 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=300&q=80'
+              : 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=300&q=80',
+          };
+
+          onAddTeacher(newTeacher);
+          addedCount++;
+        }
+
+        alert(`Berhasil mengimpor ${addedCount} data guru/GTK dari file Excel!`);
+      } catch (err) {
+        console.error('Error importing Excel:', err);
+        alert('Gagal membaca file Excel/CSV. Pastikan format file sesuai template!');
+      } finally {
+        if (excelImportRef.current) {
+          excelImportRef.current.value = '';
+        }
+      }
+    };
+    reader.readAsBinaryString(file);
+  };
+
   const handleExportCsv = () => {
     const headers = ['No', 'Nama Lengkap', 'NIP', 'NUPTK', 'Status Kepegawaian', 'Mata Pelajaran', 'Tugas / Role', 'JK', 'No HP', 'Email', 'URL Foto Drive/PNG'];
     const rows = filteredTeachers.map((t, idx) => [
@@ -241,6 +408,51 @@ export const TeacherManagementTab: React.FC<TeacherManagementTabProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
+          <input
+            type="file"
+            ref={excelImportRef}
+            onChange={handleImportExcelFile}
+            accept=".xlsx, .xls, .csv"
+            className="hidden"
+          />
+
+          <button
+            onClick={() => setIsPerformanceModalOpen(true)}
+            className="px-3.5 py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white rounded-2xl text-xs font-bold flex items-center space-x-1.5 transition-all cursor-pointer shadow-sm shadow-amber-500/20"
+          >
+            <Award className="w-4 h-4" />
+            <span>Teacher Performance Report</span>
+          </button>
+
+          <button
+            onClick={() => {
+              setSelectedQrTeacher(safeTeachers[0] || null);
+              setIsQrModalOpen(true);
+            }}
+            className="px-3.5 py-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800 rounded-2xl text-xs font-bold flex items-center space-x-1.5 transition-colors cursor-pointer"
+          >
+            <QrCode className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+            <span>Generator QR Guru</span>
+          </button>
+
+          <button
+            onClick={() => excelImportRef.current?.click()}
+            className="px-3.5 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 dark:bg-indigo-950/40 dark:text-indigo-300 dark:border-indigo-800 rounded-2xl text-xs font-bold flex items-center space-x-1.5 transition-colors cursor-pointer"
+            title="Unggah file Excel/CSV untuk batch import data GTK"
+          >
+            <Upload className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+            <span>Import Excel/CSV</span>
+          </button>
+
+          <button
+            onClick={handleDownloadTemplate}
+            className="px-3 py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-2xl text-xs font-bold flex items-center space-x-1.5 transition-colors cursor-pointer"
+            title="Unduh template Excel"
+          >
+            <FileSpreadsheet className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+            <span>Template</span>
+          </button>
+
           <button
             onClick={handleExportCsv}
             className="px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-2xl text-xs font-bold flex items-center space-x-1.5 transition-colors cursor-pointer"
@@ -260,8 +472,8 @@ export const TeacherManagementTab: React.FC<TeacherManagementTabProps> = ({
       </div>
 
       {/* Filter and Search Bar */}
-      <div className="bg-white dark:bg-slate-900 p-4 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col sm:flex-row gap-3 items-center justify-between">
-        <div className="relative w-full sm:w-80">
+      <div className="bg-white dark:bg-slate-900 p-4 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col lg:flex-row gap-3 items-center justify-between">
+        <div className="relative w-full lg:w-80">
           <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
           <input
             type="text"
@@ -272,32 +484,259 @@ export const TeacherManagementTab: React.FC<TeacherManagementTabProps> = ({
           />
         </div>
 
-        {/* Status Tabs */}
-        <div className="flex items-center space-x-1.5 overflow-x-auto w-full sm:w-auto pb-1 sm:pb-0">
-          {[
-            { id: 'ALL', label: 'Semua GTK' },
-            { id: 'PNS', label: 'PNS' },
-            { id: 'PPPK', label: 'PPPK' },
-            { id: 'PPPK_PW', label: 'PPPK PW' },
-            { id: 'HONORER', label: 'Honorer/PTT' },
-          ].map((item) => (
+        <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto justify-between lg:justify-end">
+          {/* Status Tabs */}
+          <div className="flex items-center space-x-1.5 overflow-x-auto pb-1 sm:pb-0">
+            {[
+              { id: 'ALL', label: 'Semua GTK' },
+              { id: 'PNS', label: 'PNS' },
+              { id: 'PPPK', label: 'PPPK' },
+              { id: 'PPPK_PW', label: 'PPPK PW' },
+              { id: 'HONORER', label: 'Honorer/PTT' },
+            ].map((item) => (
+              <button
+                key={item.id}
+                onClick={() => setSelectedStatus(item.id)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
+                  selectedStatus === item.id
+                    ? 'bg-slate-900 dark:bg-indigo-600 text-white shadow-xs'
+                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+                }`}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+
+          {/* View Mode Switcher */}
+          <div className="flex items-center bg-slate-100 dark:bg-slate-800 p-1 rounded-xl border border-slate-200 dark:border-slate-700">
             <button
-              key={item.id}
-              onClick={() => setSelectedStatus(item.id)}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
-                selectedStatus === item.id
-                  ? 'bg-slate-900 dark:bg-indigo-600 text-white shadow-xs'
-                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+              type="button"
+              onClick={() => setViewMode('table')}
+              className={`p-1.5 rounded-lg text-xs font-bold flex items-center space-x-1 transition-all ${
+                viewMode === 'table'
+                  ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-400 shadow-xs'
+                  : 'text-slate-500 hover:text-slate-900 dark:text-slate-400'
               }`}
+              title="Tampilan Tabel Interaktif"
             >
-              {item.label}
+              <List className="w-4 h-4" />
+              <span className="text-[11px]">Tabel</span>
             </button>
-          ))}
+            <button
+              type="button"
+              onClick={() => setViewMode('grid')}
+              className={`p-1.5 rounded-lg text-xs font-bold flex items-center space-x-1 transition-all ${
+                viewMode === 'grid'
+                  ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-400 shadow-xs'
+                  : 'text-slate-500 hover:text-slate-900 dark:text-slate-400'
+              }`}
+              title="Tampilan Grid Kartu"
+            >
+              <LayoutGrid className="w-4 h-4" />
+              <span className="text-[11px]">Kartu</span>
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* Teachers Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      {/* Sorting status info */}
+      <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 px-1">
+        <div className="flex items-center space-x-2">
+          <span>
+            Menampilkan <strong>{filteredTeachers.length}</strong> dari <strong>{teachers.length}</strong> guru & GTK
+          </span>
+          <span className="text-slate-300 dark:text-slate-600">|</span>
+          <span className="text-[11px] text-indigo-600 dark:text-indigo-400 font-semibold flex items-center space-x-1">
+            <span>Diurutkan berdasarkan: <strong>{sortField} ({sortDirection === 'asc' ? 'A-Z / Naik' : 'Z-A / Turun'})</strong></span>
+          </span>
+        </div>
+        {searchQuery && (
+          <button
+            onClick={() => setSearchQuery('')}
+            className="text-indigo-600 dark:text-indigo-400 font-bold hover:underline"
+          >
+            Reset Pencarian
+          </button>
+        )}
+      </div>
+
+      {/* Interactive Table View */}
+      {viewMode === 'table' ? (
+        <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr className="bg-slate-50 dark:bg-slate-800/80 border-b border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 font-bold select-none">
+                  <th className="py-3.5 px-4 w-12 text-center">No</th>
+                  <th
+                    onClick={() => handleSort('name')}
+                    className="py-3.5 px-4 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/60 transition-colors"
+                  >
+                    <div className="flex items-center space-x-1.5">
+                      <span>Nama Lengkap Guru / GTK</span>
+                      {sortField === 'name' ? (
+                        sortDirection === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-indigo-600" /> : <ArrowDown className="w-3.5 h-3.5 text-indigo-600" />
+                      ) : (
+                        <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
+                      )}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleSort('nip')}
+                    className="py-3.5 px-4 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/60 transition-colors"
+                  >
+                    <div className="flex items-center space-x-1.5">
+                      <span>NIP / NUPTK</span>
+                      {sortField === 'nip' ? (
+                        sortDirection === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-indigo-600" /> : <ArrowDown className="w-3.5 h-3.5 text-indigo-600" />
+                      ) : (
+                        <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
+                      )}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleSort('employmentStatus')}
+                    className="py-3.5 px-4 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/60 transition-colors"
+                  >
+                    <div className="flex items-center space-x-1.5">
+                      <span>Status Kepegawaian (ASN)</span>
+                      {sortField === 'employmentStatus' ? (
+                        sortDirection === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-indigo-600" /> : <ArrowDown className="w-3.5 h-3.5 text-indigo-600" />
+                      ) : (
+                        <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
+                      )}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleSort('subject')}
+                    className="py-3.5 px-4 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/60 transition-colors"
+                  >
+                    <div className="flex items-center space-x-1.5">
+                      <span>Mata Pelajaran</span>
+                      {sortField === 'subject' ? (
+                        sortDirection === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-indigo-600" /> : <ArrowDown className="w-3.5 h-3.5 text-indigo-600" />
+                      ) : (
+                        <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
+                      )}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleSort('role')}
+                    className="py-3.5 px-4 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/60 transition-colors"
+                  >
+                    <div className="flex items-center space-x-1.5">
+                      <span>Tugas / Jabatan</span>
+                      {sortField === 'role' ? (
+                        sortDirection === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-indigo-600" /> : <ArrowDown className="w-3.5 h-3.5 text-indigo-600" />
+                      ) : (
+                        <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
+                      )}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleSort('phone')}
+                    className="py-3.5 px-4 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/60 transition-colors"
+                  >
+                    <div className="flex items-center space-x-1.5">
+                      <span>No. WhatsApp</span>
+                      {sortField === 'phone' ? (
+                        sortDirection === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-indigo-600" /> : <ArrowDown className="w-3.5 h-3.5 text-indigo-600" />
+                      ) : (
+                        <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
+                      )}
+                    </div>
+                  </th>
+                  <th className="py-3.5 px-4 text-center">Foto Biometrik</th>
+                  <th className="py-3.5 px-4 text-right">Aksi</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-medium text-slate-800 dark:text-slate-200">
+                {filteredTeachers.map((teacher, idx) => (
+                  <tr key={teacher.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition-colors">
+                    <td className="py-3 px-4 text-center font-mono text-slate-400 text-[11px]">{idx + 1}</td>
+                    <td className="py-3 px-4">
+                      <div className="flex items-center space-x-3">
+                        <img
+                          src={formatDriveUrl(teacher.avatar) || 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=250&q=80'}
+                          alt={teacher.name}
+                          referrerPolicy="no-referrer"
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=250&q=80';
+                          }}
+                          className="w-9 h-9 rounded-xl object-cover border border-indigo-200 dark:border-indigo-900 shadow-xs shrink-0"
+                        />
+                        <div>
+                          <div className="font-bold text-slate-900 dark:text-white">{teacher.name}</div>
+                          <div className="text-[11px] text-slate-400 truncate max-w-[200px]">{teacher.email || '-'}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="py-3 px-4">
+                      <div className="font-mono font-bold text-indigo-600 dark:text-indigo-400">{teacher.nip}</div>
+                      {teacher.nuptk && <div className="font-mono text-[10px] text-slate-400">NUPTK: {teacher.nuptk}</div>}
+                    </td>
+                    <td className="py-3 px-4">
+                      {getStatusBadge(teacher.employmentStatus)}
+                    </td>
+                    <td className="py-3 px-4 font-semibold text-slate-800 dark:text-slate-200">
+                      {teacher.subject}
+                    </td>
+                    <td className="py-3 px-4 text-slate-600 dark:text-slate-400 text-[11px]">
+                      {teacher.role}
+                    </td>
+                    <td className="py-3 px-4 font-mono text-[11px] text-slate-600 dark:text-slate-400">
+                      {teacher.phone}
+                    </td>
+                    <td className="py-3 px-4 text-center">
+                      {teacher.avatar && teacher.avatar.length > 5 ? (
+                        <span className="inline-flex items-center space-x-1 px-2 py-0.5 bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300 rounded-md text-[10px] font-bold">
+                          <ScanFace className="w-3 h-3" />
+                          <span>Tersinkron</span>
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center space-x-1 px-2 py-0.5 bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 rounded-md text-[10px] font-bold">
+                          <span>Belum Ada</span>
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-3 px-4 text-right">
+                      <div className="flex items-center justify-end space-x-1">
+                        <button
+                          onClick={() => {
+                            setSelectedQrTeacher(teacher);
+                            setIsQrModalOpen(true);
+                          }}
+                          className="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 dark:hover:bg-slate-800 transition-colors"
+                          title="Lihat / Cetak QR Code GTK"
+                        >
+                          <QrCode className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => handleOpenEditModal(teacher)}
+                          className="p-1.5 rounded-lg text-indigo-600 hover:bg-indigo-50 dark:hover:bg-slate-800 transition-colors"
+                          title="Edit Guru"
+                        >
+                          <Edit2 className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => setDeleteConfirmId(teacher.id)}
+                          className="p-1.5 rounded-lg text-rose-600 hover:bg-rose-50 dark:hover:bg-slate-800 transition-colors"
+                          title="Hapus Guru"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : (
+        /* Teachers Grid */
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {filteredTeachers.map((teacher) => (
           <div
             key={teacher.id}
@@ -334,6 +773,16 @@ export const TeacherManagementTab: React.FC<TeacherManagementTabProps> = ({
                 </div>
 
                 <div className="flex items-center space-x-1">
+                  <button
+                    onClick={() => {
+                      setSelectedQrTeacher(teacher);
+                      setIsQrModalOpen(true);
+                    }}
+                    className="p-1.5 text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-slate-800 rounded-xl transition-colors cursor-pointer"
+                    title="Lihat / Cetak QR Code GTK"
+                  >
+                    <QrCode className="w-4 h-4" />
+                  </button>
                   <button
                     onClick={() => handleOpenEditModal(teacher)}
                     className="p-1.5 text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-slate-800 rounded-xl transition-colors cursor-pointer"
@@ -409,6 +858,7 @@ export const TeacherManagementTab: React.FC<TeacherManagementTabProps> = ({
           </div>
         ))}
       </div>
+      )}
 
       {filteredTeachers.length === 0 && (
         <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-12 text-center text-slate-400">
@@ -670,6 +1120,25 @@ export const TeacherManagementTab: React.FC<TeacherManagementTabProps> = ({
           </div>
         </div>
       )}
+
+      {/* Teacher QR Code Generator Modal */}
+      <TeacherQrCodeModal
+        isOpen={isQrModalOpen}
+        onClose={() => setIsQrModalOpen(false)}
+        selectedTeacher={selectedQrTeacher}
+        teachers={safeTeachers}
+        config={config}
+        onSelectTeacher={(t) => setSelectedQrTeacher(t)}
+      />
+
+      {/* Teacher Performance & Attendance Reliability Report Modal */}
+      <TeacherPerformanceReportModal
+        isOpen={isPerformanceModalOpen}
+        onClose={() => setIsPerformanceModalOpen(false)}
+        teachers={safeTeachers}
+        records={records}
+        config={config}
+      />
     </div>
   );
 };

@@ -16,9 +16,38 @@ import {
   AlertTriangle,
   Lock,
   Unlock,
+  Undo2,
+  Flame,
+  Check,
+  X,
+  History,
+  Trash2,
+  Layers,
+  ArrowRight,
 } from 'lucide-react';
-import { AttendanceMethod, AttendanceRecord, AttendanceStatus, AttendanceType, SchoolConfig, Student, Teacher, AcademicEvent } from '../types';
+import {
+  AttendanceMethod,
+  AttendanceRecord,
+  AttendanceStatus,
+  AttendanceType,
+  SchoolConfig,
+  Student,
+  Teacher,
+  AcademicEvent,
+} from '../types';
 import { formatTimeIndo, playBeepSound, checkDateIsHoliday } from '../utils/soundAndDate';
+
+interface SessionScanItem {
+  id: string;
+  recordId: string;
+  person: Student | Teacher;
+  personType: 'student' | 'teacher';
+  status: AttendanceStatus;
+  time: string;
+  note: string;
+  type: AttendanceType;
+  timestamp: number;
+}
 
 interface QrScannerTabProps {
   todayDate: string;
@@ -27,6 +56,7 @@ interface QrScannerTabProps {
   config: SchoolConfig;
   events?: AcademicEvent[];
   onRecordAttendance: (record: AttendanceRecord) => void;
+  onDeleteRecord?: (id: string) => void;
   existingRecords?: AttendanceRecord[];
 }
 
@@ -37,6 +67,7 @@ export const QrScannerTab: React.FC<QrScannerTabProps> = ({
   config,
   events = [],
   onRecordAttendance,
+  onDeleteRecord,
   existingRecords = [],
 }) => {
   const safeStudents = students || [];
@@ -48,13 +79,19 @@ export const QrScannerTab: React.FC<QrScannerTabProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [inputIdentifier, setInputIdentifier] = useState('');
   const [overrideHoliday, setOverrideHoliday] = useState(false);
-  const [lastScanned, setLastScanned] = useState<{
-    person: Student | Teacher;
-    status: AttendanceStatus;
-    time: string;
-    note: string;
-  } | null>(null);
   const [isScanning, setIsScanning] = useState(true);
+
+  // Rapid Scan Mode (Suppresses heavy popup, shows last 5 scans banner under camera)
+  const [rapidScanMode, setRapidScanMode] = useState(false);
+
+  // Live session scans (up to 10 last scans)
+  const [sessionScans, setSessionScans] = useState<SessionScanItem[]>([]);
+
+  // Detailed last scanned item (for normal popup mode)
+  const [lastScanned, setLastScanned] = useState<SessionScanItem | null>(null);
+
+  // Undo confirmation feedback toast
+  const [undoFeedback, setUndoFeedback] = useState<string | null>(null);
 
   // Check if today is a holiday in academic events
   const holidayInfo = checkDateIsHoliday(todayDate, events);
@@ -82,7 +119,9 @@ export const QrScannerTab: React.FC<QrScannerTabProps> = ({
 
   const handleScanPerson = (person: Student | Teacher) => {
     if (isHolidayLocked) {
-      alert(`⚠️ Perekaman Presensi Ditutup: Hari ini terdaftar sebagai Hari Libur (${holidayInfo.eventTitle}). Presensi tidak dapat dilakukan kecuali Anda mengaktifkan Bypass Override Admin.`);
+      alert(
+        `⚠️ Perekaman Presensi Ditutup: Hari ini terdaftar sebagai Hari Libur (${holidayInfo.eventTitle}). Presensi tidak dapat dilakukan kecuali Anda mengaktifkan Bypass Override Admin.`
+      );
       return;
     }
 
@@ -93,7 +132,7 @@ export const QrScannerTab: React.FC<QrScannerTabProps> = ({
     const classOrSubj = isStudent ? (person as Student).className : (person as Teacher).subject;
 
     // Check if already checked in today for this type
-    const alreadyRecorded = existingRecords.some(
+    const alreadyRecorded = safeExistingRecords.some(
       (r) => r.date === todayDate && r.personId === person.id && r.type === attendanceType
     );
 
@@ -103,9 +142,10 @@ export const QrScannerTab: React.FC<QrScannerTabProps> = ({
     }
 
     const { status, note } = evaluateStatus();
+    const recordId = `rec_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
 
     const newRecord: AttendanceRecord = {
-      id: `rec_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      id: recordId,
       personId: person.id,
       personType: isStudent ? 'student' : 'teacher',
       personName: person.name,
@@ -121,7 +161,7 @@ export const QrScannerTab: React.FC<QrScannerTabProps> = ({
       location: {
         lat: config.schoolLat,
         lng: config.schoolLng,
-        address: 'Pos Pemindai QR Gerbang Sekolah',
+        address: 'Pos Pemindai QR Gerbang Sekolah (SMPN 4 Satap Taliabu Barat)',
         inRadius: true,
         distanceMeter: 5,
       },
@@ -129,13 +169,66 @@ export const QrScannerTab: React.FC<QrScannerTabProps> = ({
 
     playBeepSound();
     onRecordAttendance(newRecord);
-    setLastScanned({
+
+    const scanItem: SessionScanItem = {
+      id: `scan_${Date.now()}`,
+      recordId,
       person,
+      personType: isStudent ? 'student' : 'teacher',
       status,
       time: timeStr,
       note,
-    });
+      type: attendanceType,
+      timestamp: Date.now(),
+    };
+
+    // Update session scans (keep last 10)
+    setSessionScans((prev) => [scanItem, ...prev.slice(0, 9)]);
+
+    if (!rapidScanMode) {
+      setLastScanned(scanItem);
+    } else {
+      setLastScanned(null);
+    }
+
     setInputIdentifier('');
+    setUndoFeedback(null);
+  };
+
+  // Quick Undo Last Scan Handler
+  const handleUndoLastScan = () => {
+    if (sessionScans.length === 0) {
+      alert('Belum ada riwayat pemindaian pada sesi ini untuk dibatalkan.');
+      return;
+    }
+
+    const targetToUndo = sessionScans[0];
+    if (onDeleteRecord) {
+      onDeleteRecord(targetToUndo.recordId);
+    }
+
+    setSessionScans((prev) => prev.slice(1));
+    if (lastScanned?.recordId === targetToUndo.recordId) {
+      setLastScanned(null);
+    }
+
+    setUndoFeedback(`Presensi ${targetToUndo.person.name} berhasil dibatalkan (dihapus).`);
+    setTimeout(() => setUndoFeedback(null), 4000);
+  };
+
+  // Inline Undo Specific Scan Handler
+  const handleUndoSpecificScan = (scanItem: SessionScanItem) => {
+    if (onDeleteRecord) {
+      onDeleteRecord(scanItem.recordId);
+    }
+
+    setSessionScans((prev) => prev.filter((s) => s.id !== scanItem.id));
+    if (lastScanned?.recordId === scanItem.recordId) {
+      setLastScanned(null);
+    }
+
+    setUndoFeedback(`Presensi ${scanItem.person.name} berhasil dibatalkan.`);
+    setTimeout(() => setUndoFeedback(null), 4000);
   };
 
   const handleManualSubmit = (e: React.FormEvent) => {
@@ -147,8 +240,10 @@ export const QrScannerTab: React.FC<QrScannerTabProps> = ({
     if (!inputIdentifier.trim()) return;
 
     if (personType === 'student') {
-      const found = students.find(
-        (s) => s.nisn === inputIdentifier.trim() || s.name.toLowerCase().includes(inputIdentifier.toLowerCase())
+      const found = safeStudents.find(
+        (s) =>
+          s.nisn === inputIdentifier.trim() ||
+          s.name.toLowerCase().includes(inputIdentifier.toLowerCase())
       );
       if (found) {
         handleScanPerson(found);
@@ -156,8 +251,10 @@ export const QrScannerTab: React.FC<QrScannerTabProps> = ({
         alert('NISN atau Nama Siswa tidak ditemukan dalam database.');
       }
     } else {
-      const found = teachers.find(
-        (t) => t.nip === inputIdentifier.trim() || t.name.toLowerCase().includes(inputIdentifier.toLowerCase())
+      const found = safeTeachers.find(
+        (t) =>
+          t.nip === inputIdentifier.trim() ||
+          t.name.toLowerCase().includes(inputIdentifier.toLowerCase())
       );
       if (found) {
         handleScanPerson(found);
@@ -168,14 +265,14 @@ export const QrScannerTab: React.FC<QrScannerTabProps> = ({
   };
 
   // Filter list for quick click simulation
-  const filteredStudents = students.filter(
+  const filteredStudents = safeStudents.filter(
     (s) =>
       s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       s.nisn.includes(searchQuery) ||
       s.className.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const filteredTeachers = teachers.filter(
+  const filteredTeachers = safeTeachers.filter(
     (t) =>
       t.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       t.nip.includes(searchQuery) ||
@@ -209,7 +306,8 @@ export const QrScannerTab: React.FC<QrScannerTabProps> = ({
                 <span className="font-extrabold text-sm">{holidayInfo.eventTitle}</span>
               </div>
               <p className="text-xs mt-1 text-slate-600">
-                {holidayInfo.description} • Sistem otomatis mengunci perekaman presensi untuk mencegah kekeliruan absensi di hari libur.
+                {holidayInfo.description} • Sistem otomatis mengunci perekaman presensi untuk mencegah
+                kekeliruan absensi di hari libur.
               </p>
             </div>
           </div>
@@ -230,40 +328,91 @@ export const QrScannerTab: React.FC<QrScannerTabProps> = ({
         </div>
       )}
 
-      {/* Top Config Header for Scanner */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 rounded-[2.5rem] bg-white border border-slate-200/90 shadow-xs">
+      {/* Undo Feedback Banner */}
+      {undoFeedback && (
+        <div className="p-4 rounded-2xl bg-amber-500 text-white font-bold text-xs flex items-center justify-between shadow-md animate-in slide-in-from-top-2">
+          <div className="flex items-center space-x-2">
+            <Undo2 className="w-4 h-4" />
+            <span>{undoFeedback}</span>
+          </div>
+          <button
+            onClick={() => setUndoFeedback(null)}
+            className="p-1 hover:bg-amber-600 rounded-lg cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {/* Top Config Header & Toolbar */}
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 p-5 rounded-[2.5rem] bg-white border border-slate-200/90 shadow-xs">
         <div>
           <h2 className="font-extrabold text-lg text-slate-900 flex items-center space-x-2">
             <QrCode className="w-5 h-5 text-indigo-600" />
             <span>Pemindai QR Code Presensi Siswa & Guru</span>
           </h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            Arahkan kamera ke Kartu Pelajar Digital atau pilih siswa dari daftar untuk simulasi tap kartu
+            Waktu Standar WITA (UTC+8) • Arahkan kamera atau gunakan scanner barcode USB
           </p>
         </div>
 
-        {/* Type Toggle: Masuk vs Pulang */}
-        <div className="flex items-center space-x-2 bg-slate-100 p-1.5 rounded-full border border-slate-200">
+        <div className="flex flex-wrap items-center gap-2.5">
+          {/* Rapid Scan Mode Toggle Button */}
           <button
-            onClick={() => setAttendanceType('masuk')}
-            className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer ${
-              attendanceType === 'masuk'
-                ? 'bg-indigo-600 text-white shadow-xs'
-                : 'text-slate-600 hover:text-slate-900'
+            onClick={() => setRapidScanMode(!rapidScanMode)}
+            className={`px-3.5 py-2 rounded-2xl text-xs font-bold flex items-center space-x-2 transition-all cursor-pointer border ${
+              rapidScanMode
+                ? 'bg-amber-500 border-amber-600 text-white shadow-xs'
+                : 'bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-700'
             }`}
+            title="Scan Cepat: Hilangkan popup individual untuk antrian siswa pagi hari"
           >
-            Presensi Masuk (Check-In)
+            <Flame className={`w-4 h-4 ${rapidScanMode ? 'animate-bounce text-amber-100' : 'text-slate-500'}`} />
+            <span>Mode Scan Kilat (Rapid): {rapidScanMode ? 'ON' : 'OFF'}</span>
           </button>
+
+          {/* Quick Undo Button */}
           <button
-            onClick={() => setAttendanceType('pulang')}
-            className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer ${
-              attendanceType === 'pulang'
-                ? 'bg-indigo-600 text-white shadow-xs'
-                : 'text-slate-600 hover:text-slate-900'
+            onClick={handleUndoLastScan}
+            disabled={sessionScans.length === 0}
+            className={`px-3.5 py-2 rounded-2xl text-xs font-bold flex items-center space-x-1.5 transition-all cursor-pointer border ${
+              sessionScans.length > 0
+                ? 'bg-rose-50 hover:bg-rose-100 border-rose-200 text-rose-700 shadow-xs'
+                : 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed'
             }`}
+            title={
+              sessionScans.length > 0
+                ? `Batalkan scan terakhir: ${sessionScans[0].person.name}`
+                : 'Belum ada scan untuk dibatalkan'
+            }
           >
-            Presensi Pulang (Check-Out)
+            <Undo2 className="w-3.5 h-3.5" />
+            <span>Urungkan Scan Terakhir</span>
           </button>
+
+          {/* Type Toggle: Masuk vs Pulang */}
+          <div className="flex items-center space-x-1 bg-slate-100 p-1 rounded-2xl border border-slate-200">
+            <button
+              onClick={() => setAttendanceType('masuk')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                attendanceType === 'masuk'
+                  ? 'bg-indigo-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Masuk (Check-In)
+            </button>
+            <button
+              onClick={() => setAttendanceType('pulang')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                attendanceType === 'pulang'
+                  ? 'bg-indigo-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Pulang (Check-Out)
+            </button>
+          </div>
         </div>
       </div>
 
@@ -290,23 +439,81 @@ export const QrScannerTab: React.FC<QrScannerTabProps> = ({
                   <QrCode className="w-8 h-8 animate-pulse" />
                 </div>
                 <p className="font-bold text-xs text-slate-200">
-                  Kamera Pemindai Aktif
+                  Kamera Pemindai Aktif (Waktu WITA)
                 </p>
                 <p className="text-[10px] text-slate-400 max-w-xs">
-                  Batas toleransi masuk: <strong>{config.checkInDeadline} WIB</strong>
+                  Batas toleransi masuk: <strong>{config.checkInDeadline} WITA</strong>
                 </p>
               </div>
 
-              {/* Audio chime badge */}
-              <div className="absolute bottom-3 left-3 flex items-center space-x-1 px-2.5 py-1 rounded-full bg-slate-900/80 backdrop-blur-md text-[10px] text-slate-300 border border-slate-700">
-                <Volume2 className="w-3 h-3 text-emerald-400" />
-                <span>Audio Beep Aktif</span>
+              {/* Status Tags */}
+              <div className="absolute bottom-3 left-3 flex items-center space-x-2">
+                <div className="flex items-center space-x-1 px-2.5 py-1 rounded-full bg-slate-900/80 backdrop-blur-md text-[10px] text-slate-300 border border-slate-700">
+                  <Volume2 className="w-3 h-3 text-emerald-400" />
+                  <span>Beep Aktif</span>
+                </div>
+                {rapidScanMode && (
+                  <div className="flex items-center space-x-1 px-2.5 py-1 rounded-full bg-amber-500/90 text-[10px] text-white font-bold">
+                    <Flame className="w-3 h-3" />
+                    <span>Mode Kilat ON</span>
+                  </div>
+                )}
               </div>
             </div>
           </div>
 
-          {/* Last Scanned Instant Notification Card */}
-          {lastScanned && (
+          {/* Rapid Scan Mode: Compact 5-Item Live Stream Banner */}
+          {rapidScanMode && (
+            <div className="p-4 rounded-[2rem] bg-amber-50/80 border border-amber-200/90 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <Flame className="w-4 h-4 text-amber-600" />
+                  <span className="font-extrabold text-xs text-amber-900">
+                    Live Stream Scan Kilat (5 Terakhir)
+                  </span>
+                </div>
+                <span className="text-[10px] text-amber-700 font-semibold">
+                  {sessionScans.length} Total Sesi Ini
+                </span>
+              </div>
+
+              {sessionScans.length === 0 ? (
+                <p className="text-xs text-slate-500 py-1 italic">
+                  Siap memindai kartu... Tempelkan kartu QR siswa secara berurutan.
+                </p>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {sessionScans.slice(0, 5).map((scan, idx) => (
+                    <div
+                      key={scan.id}
+                      className="p-2 rounded-xl bg-white border border-amber-200 flex items-center space-x-2 shadow-2xs"
+                    >
+                      <span className="w-5 h-5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-bold flex items-center justify-center shrink-0">
+                        {idx + 1}
+                      </span>
+                      <img
+                        src={scan.person.avatar}
+                        alt={scan.person.name}
+                        className="w-8 h-8 rounded-lg object-cover shrink-0"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-bold text-slate-900 truncate">
+                          {scan.person.name}
+                        </p>
+                        <p className="text-[10px] text-slate-500">
+                          {scan.time} WITA • {scan.status === 'hadir' ? 'Tepat Waktu' : 'Terlambat'}
+                        </p>
+                      </div>
+                      <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Standard Mode: Last Scanned Instant Notification Card */}
+          {!rapidScanMode && lastScanned && (
             <div className="p-5 rounded-[2rem] bg-emerald-50 border border-emerald-200/90 flex items-center space-x-4 animate-in zoom-in-95 duration-200">
               <img
                 src={lastScanned.person.avatar}
@@ -319,21 +526,27 @@ export const QrScannerTab: React.FC<QrScannerTabProps> = ({
                     Berhasil Dipindai!
                   </span>
                   <span className="text-xs font-mono font-bold text-emerald-900">
-                    {lastScanned.time} WIB
+                    {lastScanned.time} WITA
                   </span>
                 </div>
                 <h4 className="font-bold text-sm text-slate-900 truncate mt-1">
                   {lastScanned.person.name}
                 </h4>
                 <p className="text-xs text-slate-600">
-                  {'className' in lastScanned.person ? lastScanned.person.className : lastScanned.person.subject} • {lastScanned.note}
+                  {'className' in lastScanned.person
+                    ? lastScanned.person.className
+                    : lastScanned.person.subject}{' '}
+                  • {lastScanned.note}
                 </p>
               </div>
             </div>
           )}
 
           {/* Manual Input / Barcode Scanner Field */}
-          <form onSubmit={handleManualSubmit} className="p-5 rounded-[2.5rem] bg-white border border-slate-200/90 shadow-xs space-y-3">
+          <form
+            onSubmit={handleManualSubmit}
+            className="p-5 rounded-[2.5rem] bg-white border border-slate-200/90 shadow-xs space-y-3"
+          >
             <h4 className="font-bold text-xs text-slate-700 uppercase tracking-wider flex items-center space-x-1.5">
               <Zap className="w-4 h-4 text-amber-500" />
               <span>Input Manual / Scanner Barcode USB</span>
@@ -343,7 +556,11 @@ export const QrScannerTab: React.FC<QrScannerTabProps> = ({
                 type="text"
                 value={inputIdentifier}
                 onChange={(e) => setInputIdentifier(e.target.value)}
-                placeholder={personType === 'student' ? 'Ketik / Scan NISN (Contoh: 0078129001)' : 'Ketik NIP Guru...'}
+                placeholder={
+                  personType === 'student'
+                    ? 'Ketik / Scan NISN (Contoh: 0078129001)'
+                    : 'Ketik NIP Guru...'
+                }
                 className="flex-1 text-xs px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-full focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
               />
               <button
@@ -356,9 +573,98 @@ export const QrScannerTab: React.FC<QrScannerTabProps> = ({
           </form>
         </div>
 
-        {/* Right Column: Quick Tap Roster List */}
-        <div className="lg:col-span-6 space-y-4">
-          <div className="p-6 rounded-[2.5rem] bg-white border border-slate-200/90 shadow-xs space-y-4">
+        {/* Right Column: Quick Tap Roster List & Live 10 Last Scans */}
+        <div className="lg:col-span-6 space-y-5">
+          {/* Section: Live List of Last 10 Scans Performed in Current Session */}
+          <div className="p-5 rounded-[2.5rem] bg-white border border-slate-200/90 shadow-xs space-y-3.5">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+              <div className="flex items-center space-x-2">
+                <div className="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold">
+                  <History className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-sm text-slate-900">
+                    Live 10 Pemindaian Terakhir (Sesi Ini)
+                  </h3>
+                  <p className="text-[10px] text-slate-500">
+                    Verifikasi langsung siswa/guru yang baru saja tercatat hadir
+                  </p>
+                </div>
+              </div>
+
+              {sessionScans.length > 0 && (
+                <button
+                  onClick={() => setSessionScans([])}
+                  className="text-[11px] font-semibold text-slate-400 hover:text-slate-600 cursor-pointer"
+                >
+                  Bersihkan Riwayat
+                </button>
+              )}
+            </div>
+
+            {sessionScans.length === 0 ? (
+              <div className="p-6 text-center rounded-2xl bg-slate-50 border border-slate-100 space-y-2">
+                <QrCode className="w-8 h-8 text-slate-300 mx-auto" />
+                <p className="text-xs font-semibold text-slate-600">
+                  Belum ada pemindaian di sesi ini
+                </p>
+                <p className="text-[10px] text-slate-400">
+                  Hasil scan QR kartu pelajar atau guru akan langsung muncul di sini secara real-time.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
+                {sessionScans.slice(0, 10).map((scan, idx) => (
+                  <div
+                    key={scan.id}
+                    className="p-2.5 rounded-2xl bg-slate-50 hover:bg-slate-100/90 border border-slate-200/80 flex items-center justify-between gap-3 transition-colors"
+                  >
+                    <div className="flex items-center space-x-2.5 min-w-0">
+                      <span className="w-5 h-5 rounded-lg bg-indigo-100 text-indigo-800 text-[10px] font-extrabold flex items-center justify-center shrink-0">
+                        {idx + 1}
+                      </span>
+                      <img
+                        src={scan.person.avatar}
+                        alt={scan.person.name}
+                        className="w-8 h-8 rounded-xl object-cover border border-slate-200 shrink-0"
+                      />
+                      <div className="min-w-0">
+                        <div className="flex items-center space-x-1.5">
+                          <p className="font-bold text-xs text-slate-900 truncate">
+                            {scan.person.name}
+                          </p>
+                          <span
+                            className={`px-1.5 py-0.2 rounded-full text-[9px] font-bold ${
+                              scan.status === 'hadir'
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : 'bg-amber-100 text-amber-800'
+                            }`}
+                          >
+                            {scan.status === 'hadir' ? 'Hadir' : 'Terlambat'}
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-slate-500 truncate">
+                          {'className' in scan.person ? scan.person.className : scan.person.subject} •{' '}
+                          <span className="font-mono">{scan.time} WITA</span>
+                        </p>
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => handleUndoSpecificScan(scan)}
+                      className="p-1.5 rounded-xl bg-white hover:bg-rose-50 border border-slate-200 hover:border-rose-200 text-slate-400 hover:text-rose-600 transition-colors cursor-pointer shrink-0"
+                      title="Batalkan (Hapus) presensi orang ini"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Quick Tap Roster List */}
+          <div className="p-5 rounded-[2.5rem] bg-white border border-slate-200/90 shadow-xs space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div>
                 <h3 className="font-bold text-sm text-slate-900 flex items-center space-x-2">
@@ -366,7 +672,7 @@ export const QrScannerTab: React.FC<QrScannerTabProps> = ({
                   <span>Daftar Cepat Tap Kartu Pelajar</span>
                 </h3>
                 <p className="text-[11px] text-slate-500">
-                  Klik tombol <strong>"Tap Kartu"</strong> pada siswa untuk mensimulasikan scan instan
+                  Klik tombol <strong>"Tap Kartu"</strong> untuk mensimulasikan scan instan
                 </p>
               </div>
 
@@ -380,7 +686,7 @@ export const QrScannerTab: React.FC<QrScannerTabProps> = ({
                       : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
-                  Siswa ({students.length})
+                  Siswa ({safeStudents.length})
                 </button>
                 <button
                   onClick={() => setPersonType('teacher')}
@@ -390,7 +696,7 @@ export const QrScannerTab: React.FC<QrScannerTabProps> = ({
                       : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
-                  Guru & GTK ({teachers.length})
+                  Guru & GTK ({safeTeachers.length})
                 </button>
               </div>
             </div>
@@ -408,10 +714,10 @@ export const QrScannerTab: React.FC<QrScannerTabProps> = ({
             </div>
 
             {/* Scrollable Person List */}
-            <div className="space-y-2.5 max-h-[460px] overflow-y-auto pr-1">
+            <div className="space-y-2.5 max-h-[320px] overflow-y-auto pr-1">
               {personType === 'student' ? (
                 filteredStudents.map((std) => {
-                  const alreadyChecked = existingRecords.some(
+                  const alreadyChecked = safeExistingRecords.some(
                     (r) => r.date === todayDate && r.personId === std.id && r.type === attendanceType
                   );
 
@@ -428,9 +734,7 @@ export const QrScannerTab: React.FC<QrScannerTabProps> = ({
                         />
                         <div className="min-w-0">
                           <div className="flex items-center space-x-2">
-                            <p className="font-bold text-xs text-slate-900 truncate">
-                              {std.name}
-                            </p>
+                            <p className="font-bold text-xs text-slate-900 truncate">{std.name}</p>
                             <span className="text-[10px] font-bold px-2 py-0.2 rounded-full bg-slate-200 text-slate-700">
                               {std.className}
                             </span>
@@ -458,7 +762,7 @@ export const QrScannerTab: React.FC<QrScannerTabProps> = ({
                 })
               ) : (
                 filteredTeachers.map((tch) => {
-                  const alreadyChecked = existingRecords.some(
+                  const alreadyChecked = safeExistingRecords.some(
                     (r) => r.date === todayDate && r.personId === tch.id && r.type === attendanceType
                   );
 
@@ -475,9 +779,7 @@ export const QrScannerTab: React.FC<QrScannerTabProps> = ({
                         />
                         <div className="min-w-0">
                           <div className="flex items-center space-x-2">
-                            <p className="font-bold text-xs text-slate-900 truncate">
-                              {tch.name}
-                            </p>
+                            <p className="font-bold text-xs text-slate-900 truncate">{tch.name}</p>
                           </div>
                           <p className="text-[11px] text-slate-500 truncate mt-0.5">
                             NIP: {tch.nip} • {tch.subject}

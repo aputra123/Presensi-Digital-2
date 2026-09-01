@@ -1,0 +1,65 @@
+{
+  "id": "/?source=pwa",
+  "short_name": "SMPN4 Taliabu",
+  "name": "Presensi SMPN 4 Satu Atap Taliabu Barat",
+  "description": "Sistem Informasi Presensi Biometrik Digital & Portal GTK SMP Negeri 4 Satu Atap Taliabu Barat, Kab. Pulau Taliabu, Maluku Utara",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui", "window-controls-overlay"],
+  "background_color": "#0f172a",
+  "theme_color": "#4f46e5",
+  "orientation": "any",
+  "lang": "id",
+  "dir": "ltr",
+  "categories": ["education", "productivity", "utilities"],
+  "icons": [
+    {
+      "src": "/icon-192.svg",
+      "type": "image/svg+xml",
+      "sizes": "192x192",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-192.svg",
+      "type": "image/svg+xml",
+      "sizes": "192x192",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icon-512.svg",
+      "type": "image/svg+xml",
+      "sizes": "512x512",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.svg",
+      "type": "image/svg+xml",
+      "sizes": "512x512",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Scanner QR Presensi",
+      "short_name": "Scanner",
+      "description": "Pindai QR Code Presensi Masuk / Pulang Siswa dan Guru",
+      "url": "/?tab=scan",
+      "icons": [{ "src": "/icon-192.svg", "sizes": "192x192" }]
+    },
+    {
+      "name": "Selfie GPS & BKD",
+      "short_name": "Selfie GPS",
+      "description": "Presensi Wajah & Geofence Guru dan GTK",
+      "url": "/?tab=selfie",
+      "icons": [{ "src": "/icon-192.svg", "sizes": "192x192" }]
+    },
+    {
+      "name": "Rekapitulasi Presensi",
+      "short_name": "Rekap",
+      "description": "Lihat dan ekspor rekap presensi harian / bulanan",
+      "url": "/?tab=rekap",
+      "icons": [{ "src": "/icon-192.svg", "sizes": "192x192" }]
+    }
+  ]
+}

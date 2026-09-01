@@ -1,4 +1,5 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useMemo } from 'react';
+import * as XLSX from 'xlsx';
 import {
   GraduationCap,
   Plus,
@@ -19,6 +20,12 @@ import {
   ScanFace,
   QrCode,
   Sparkles,
+  ArrowUp,
+  ArrowDown,
+  ArrowUpDown,
+  LayoutGrid,
+  List,
+  FileSpreadsheet,
 } from 'lucide-react';
 import { Student, SchoolClass, ActiveTab, SchoolConfig } from '../types';
 import { formatDriveUrl, downloadCsv } from '../utils/soundAndDate';
@@ -72,8 +79,9 @@ export const StudentManagementTab: React.FC<StudentManagementTabProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedClassId, setSelectedClassId] = useState<string>('ALL');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'with_photo' | 'no_photo' | 'L' | 'P'>('ALL');
-  const [sortBy, setSortBy] = useState<'name_asc' | 'name_desc' | 'nisn_asc' | 'class_asc'>('name_asc');
-  const [viewMode, setViewMode] = useState<'grid' | 'table'>('grid');
+  const [sortField, setSortField] = useState<'name' | 'nisn' | 'className' | 'gender' | 'parentPhone'>('name');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+  const [viewMode, setViewMode] = useState<'grid' | 'table'>('table');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingStudent, setEditingStudent] = useState<Student | null>(null);
   const [isQrModalOpen, setIsQrModalOpen] = useState(false);
@@ -96,38 +104,56 @@ export const StudentManagementTab: React.FC<StudentManagementTabProps> = ({
 
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
-  // Filtering and Sorting
-  const filteredAndSortedStudents = safeStudents
-    .filter((s) => {
-      const matchesSearch =
-        s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        s.nisn.includes(searchQuery) ||
-        (s.nik && s.nik.includes(searchQuery)) ||
-        s.className.toLowerCase().includes(searchQuery.toLowerCase());
+  // Instant Sort Handler
+  const handleSort = (field: 'name' | 'nisn' | 'className' | 'gender' | 'parentPhone') => {
+    if (sortField === field) {
+      setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortField(field);
+      setSortDirection('asc');
+    }
+  };
 
-      const matchesClass =
-        selectedClassId === 'ALL' || s.classId === selectedClassId;
+  // Instant Reactive Filtering and Sorting via useMemo
+  const filteredStudents = useMemo(() => {
+    return safeStudents
+      .filter((s) => {
+        const matchesSearch =
+          s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          s.nisn.includes(searchQuery) ||
+          (s.nik && s.nik.includes(searchQuery)) ||
+          s.className.toLowerCase().includes(searchQuery.toLowerCase());
 
-      let matchesStatus = true;
-      if (statusFilter === 'with_photo') {
-        matchesStatus = Boolean(s.avatar && s.avatar.length > 5);
-      } else if (statusFilter === 'no_photo') {
-        matchesStatus = !s.avatar || s.avatar.length <= 5;
-      } else if (statusFilter === 'L' || statusFilter === 'P') {
-        matchesStatus = s.gender === statusFilter;
-      }
+        const matchesClass =
+          selectedClassId === 'ALL' || s.classId === selectedClassId;
 
-      return matchesSearch && matchesClass && matchesStatus;
-    })
-    .sort((a, b) => {
-      if (sortBy === 'name_asc') return a.name.localeCompare(b.name);
-      if (sortBy === 'name_desc') return b.name.localeCompare(a.name);
-      if (sortBy === 'nisn_asc') return a.nisn.localeCompare(b.nisn);
-      if (sortBy === 'class_asc') return a.className.localeCompare(b.className);
-      return 0;
-    });
+        let matchesStatus = true;
+        if (statusFilter === 'with_photo') {
+          matchesStatus = Boolean(s.avatar && s.avatar.length > 5);
+        } else if (statusFilter === 'no_photo') {
+          matchesStatus = !s.avatar || s.avatar.length <= 5;
+        } else if (statusFilter === 'L' || statusFilter === 'P') {
+          matchesStatus = s.gender === statusFilter;
+        }
 
-  const filteredStudents = filteredAndSortedStudents;
+        return matchesSearch && matchesClass && matchesStatus;
+      })
+      .sort((a, b) => {
+        let cmp = 0;
+        if (sortField === 'name') {
+          cmp = a.name.localeCompare(b.name, 'id');
+        } else if (sortField === 'nisn') {
+          cmp = a.nisn.localeCompare(b.nisn);
+        } else if (sortField === 'className') {
+          cmp = a.className.localeCompare(b.className);
+        } else if (sortField === 'gender') {
+          cmp = a.gender.localeCompare(b.gender);
+        } else if (sortField === 'parentPhone') {
+          cmp = (a.parentPhone || '').localeCompare(b.parentPhone || '');
+        }
+        return sortDirection === 'asc' ? cmp : -cmp;
+      });
+  }, [safeStudents, searchQuery, selectedClassId, statusFilter, sortField, sortDirection]);
 
   const handleOpenAddModal = () => {
     setEditingStudent(null);
@@ -221,6 +247,98 @@ export const StudentManagementTab: React.FC<StudentManagementTabProps> = ({
     setIsModalOpen(false);
   };
 
+  const excelImportRef = useRef<HTMLInputElement>(null);
+
+  const handleDownloadTemplate = () => {
+    const templateHeaders = [
+      'Nama Lengkap',
+      'NISN',
+      'NIK',
+      'Kelas',
+      'Jenis Kelamin (L/P)',
+      'No HP Orang Tua',
+      'Email Siswa',
+      'Alamat',
+    ];
+    const sampleRows = [
+      ['Ahmad Fauzi', '0089123456', '3174012345678901', 'VII-A', 'L', '081234567890', 'ahmad.fauzi@siswa.sch.id', 'Desa Bobong'],
+      ['Siti Nurhaliza', '0089123457', '3174012345678902', 'VII-A', 'P', '081234567891', 'siti.nur@siswa.sch.id', 'Desa Wayaloar'],
+    ];
+
+    const worksheet = XLSX.utils.aoa_to_sheet([templateHeaders, ...sampleRows]);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Template Siswa');
+    XLSX.writeFile(workbook, 'Template_Import_Siswa.xlsx');
+  };
+
+  const handleImportExcelFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const bstr = evt.target?.result;
+        const wb = XLSX.read(bstr, { type: 'binary' });
+        const wsName = wb.SheetNames[0];
+        const ws = wb.Sheets[wsName];
+        const data = XLSX.utils.sheet_to_json<any>(ws, { header: 1 });
+
+        if (data.length < 2) {
+          alert('File tidak berisi data yang cukup!');
+          return;
+        }
+
+        // Parse rows starting from row 1 (row 0 is header)
+        let addedCount = 0;
+        for (let i = 1; i < data.length; i++) {
+          const row = data[i];
+          if (!row || !row[0] || !row[1]) continue; // Name and NISN required
+
+          const name = String(row[0]).trim();
+          const nisn = String(row[1]).trim();
+          const nik = row[2] ? String(row[2]).trim() : '';
+          const className = row[3] ? String(row[3]).trim() : safeClasses[0]?.name || 'X MIPA 1';
+          const gender = row[4] && String(row[4]).toUpperCase().includes('P') ? 'P' : 'L';
+          const parentPhone = row[5] ? String(row[5]).trim() : '';
+          const email = row[6] ? String(row[6]).trim() : `${name.toLowerCase().replace(/\s+/g, '.')}@siswa.sch.id`;
+          const address = row[7] ? String(row[7]).trim() : '';
+
+          const matchedClass = safeClasses.find((c) => c.name.toLowerCase() === className.toLowerCase());
+
+          const newStudent: Student = {
+            id: `std_${Date.now()}_${i}`,
+            name,
+            nisn,
+            nik,
+            classId: matchedClass?.id || safeClasses[0]?.id || 'c1',
+            className: matchedClass?.name || className,
+            gender,
+            parentPhone,
+            email,
+            address,
+            avatar: gender === 'P'
+              ? 'https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=250&q=80'
+              : 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?auto=format&fit=crop&w=250&q=80',
+          };
+
+          onAddStudent(newStudent);
+          addedCount++;
+        }
+
+        alert(`Berhasil mengimpor ${addedCount} data siswa dari file!`);
+      } catch (err) {
+        console.error('Error importing Excel:', err);
+        alert('Gagal membaca file Excel/CSV. Pastikan format file sesuai template!');
+      } finally {
+        if (excelImportRef.current) {
+          excelImportRef.current.value = '';
+        }
+      }
+    };
+    reader.readAsBinaryString(file);
+  };
+
   const handleExportCsv = () => {
     const headers = ['No', 'Nama Lengkap', 'NISN', 'NIK', 'Kelas / Rombel', 'JK', 'No HP Orang Tua', 'Email Siswa', 'Alamat', 'URL Foto Biometrik'];
     const rows = filteredStudents.map((s, idx) => [
@@ -261,6 +379,32 @@ export const StudentManagementTab: React.FC<StudentManagementTabProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
+          <input
+            type="file"
+            ref={excelImportRef}
+            onChange={handleImportExcelFile}
+            accept=".xlsx, .xls, .csv"
+            className="hidden"
+          />
+
+          <button
+            onClick={() => excelImportRef.current?.click()}
+            className="px-3.5 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 dark:bg-indigo-950/40 dark:text-indigo-300 dark:border-indigo-800 rounded-2xl text-xs font-bold flex items-center space-x-1.5 transition-colors cursor-pointer"
+            title="Unggah file Excel/CSV untuk menambahkan banyak siswa sekaligus"
+          >
+            <Upload className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+            <span>Import Excel/CSV</span>
+          </button>
+
+          <button
+            onClick={handleDownloadTemplate}
+            className="px-3 py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-2xl text-xs font-bold flex items-center space-x-1.5 transition-colors cursor-pointer"
+            title="Unduh template format Excel untuk batch import"
+          >
+            <FileSpreadsheet className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+            <span>Template</span>
+          </button>
+
           <button
             onClick={() => {
               setSelectedQrStudent(safeStudents[0] || null);
@@ -348,28 +492,49 @@ export const StudentManagementTab: React.FC<StudentManagementTabProps> = ({
               </select>
             </div>
 
-            {/* Sort Dropdown */}
-            <div className="flex items-center space-x-1.5">
-              <span className="text-[11px] font-bold text-slate-400">Urutkan:</span>
-              <select
-                value={sortBy}
-                onChange={(e) => setSortBy(e.target.value as any)}
-                className="px-3 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+            {/* View Mode Switcher */}
+            <div className="flex items-center bg-slate-100 dark:bg-slate-800 p-1 rounded-xl border border-slate-200 dark:border-slate-700">
+              <button
+                type="button"
+                onClick={() => setViewMode('table')}
+                className={`p-1.5 rounded-lg text-xs font-bold flex items-center space-x-1 transition-all ${
+                  viewMode === 'table'
+                    ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-400 shadow-xs'
+                    : 'text-slate-500 hover:text-slate-900 dark:text-slate-400'
+                }`}
+                title="Tampilan Tabel Interaktif"
               >
-                <option value="name_asc">Nama (A - Z)</option>
-                <option value="name_desc">Nama (Z - A)</option>
-                <option value="nisn_asc">NISN Terurut</option>
-                <option value="class_asc">Rombel Kelas</option>
-              </select>
+                <List className="w-4 h-4" />
+                <span className="text-[11px]">Tabel</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode('grid')}
+                className={`p-1.5 rounded-lg text-xs font-bold flex items-center space-x-1 transition-all ${
+                  viewMode === 'grid'
+                    ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-400 shadow-xs'
+                    : 'text-slate-500 hover:text-slate-900 dark:text-slate-400'
+                }`}
+                title="Tampilan Grid Kartu"
+              >
+                <LayoutGrid className="w-4 h-4" />
+                <span className="text-[11px]">Kartu</span>
+              </button>
             </div>
           </div>
         </div>
 
-        {/* Filter Summary Count */}
+        {/* Filter Summary & Sorting Indicator */}
         <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 pt-2 border-t border-slate-100 dark:border-slate-800">
-          <span>
-            Menampilkan <strong>{filteredStudents.length}</strong> dari <strong>{students.length}</strong> siswa
-          </span>
+          <div className="flex items-center space-x-2">
+            <span>
+              Menampilkan <strong>{filteredStudents.length}</strong> dari <strong>{students.length}</strong> siswa
+            </span>
+            <span className="text-slate-300 dark:text-slate-600">|</span>
+            <span className="text-[11px] text-indigo-600 dark:text-indigo-400 font-semibold flex items-center space-x-1">
+              <span>Diurutkan berdasarkan: <strong>{sortField} ({sortDirection === 'asc' ? 'A-Z / Naik' : 'Z-A / Turun'})</strong></span>
+            </span>
+          </div>
           {searchQuery && (
             <button
               onClick={() => setSearchQuery('')}
@@ -381,8 +546,176 @@ export const StudentManagementTab: React.FC<StudentManagementTabProps> = ({
         </div>
       </div>
 
-      {/* Students Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      {/* Interactive Table View */}
+      {viewMode === 'table' ? (
+        <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr className="bg-slate-50 dark:bg-slate-800/80 border-b border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 font-bold select-none">
+                  <th className="py-3.5 px-4 w-12 text-center">No</th>
+                  <th
+                    onClick={() => handleSort('name')}
+                    className="py-3.5 px-4 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/60 transition-colors"
+                  >
+                    <div className="flex items-center space-x-1.5">
+                      <span>Nama Lengkap Siswa</span>
+                      {sortField === 'name' ? (
+                        sortDirection === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-indigo-600" /> : <ArrowDown className="w-3.5 h-3.5 text-indigo-600" />
+                      ) : (
+                        <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
+                      )}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleSort('nisn')}
+                    className="py-3.5 px-4 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/60 transition-colors"
+                  >
+                    <div className="flex items-center space-x-1.5">
+                      <span>NISN / NIK</span>
+                      {sortField === 'nisn' ? (
+                        sortDirection === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-indigo-600" /> : <ArrowDown className="w-3.5 h-3.5 text-indigo-600" />
+                      ) : (
+                        <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
+                      )}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleSort('className')}
+                    className="py-3.5 px-4 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/60 transition-colors"
+                  >
+                    <div className="flex items-center space-x-1.5">
+                      <span>Kelas / Rombel</span>
+                      {sortField === 'className' ? (
+                        sortDirection === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-indigo-600" /> : <ArrowDown className="w-3.5 h-3.5 text-indigo-600" />
+                      ) : (
+                        <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
+                      )}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleSort('gender')}
+                    className="py-3.5 px-4 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/60 transition-colors"
+                  >
+                    <div className="flex items-center space-x-1.5">
+                      <span>L/P</span>
+                      {sortField === 'gender' ? (
+                        sortDirection === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-indigo-600" /> : <ArrowDown className="w-3.5 h-3.5 text-indigo-600" />
+                      ) : (
+                        <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
+                      )}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleSort('parentPhone')}
+                    className="py-3.5 px-4 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/60 transition-colors"
+                  >
+                    <div className="flex items-center space-x-1.5">
+                      <span>WhatsApp Ortu</span>
+                      {sortField === 'parentPhone' ? (
+                        sortDirection === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-indigo-600" /> : <ArrowDown className="w-3.5 h-3.5 text-indigo-600" />
+                      ) : (
+                        <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
+                      )}
+                    </div>
+                  </th>
+                  <th className="py-3.5 px-4 text-center">Foto Biometrik</th>
+                  <th className="py-3.5 px-4 text-right">Aksi</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-medium text-slate-800 dark:text-slate-200">
+                {filteredStudents.map((student, idx) => (
+                  <tr key={student.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition-colors">
+                    <td className="py-3 px-4 text-center font-mono text-slate-400 text-[11px]">{idx + 1}</td>
+                    <td className="py-3 px-4">
+                      <div className="flex items-center space-x-3">
+                        <img
+                          src={formatDriveUrl(student.avatar) || 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?auto=format&fit=crop&w=250&q=80'}
+                          alt={student.name}
+                          referrerPolicy="no-referrer"
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?auto=format&fit=crop&w=250&q=80';
+                          }}
+                          className="w-9 h-9 rounded-xl object-cover border border-slate-200 dark:border-slate-700 shadow-xs shrink-0"
+                        />
+                        <div>
+                          <div className="font-bold text-slate-900 dark:text-white">{student.name}</div>
+                          <div className="text-[11px] text-slate-400 truncate max-w-[200px]">{student.email || '-'}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="py-3 px-4">
+                      <div className="font-mono font-bold text-indigo-600 dark:text-indigo-400">{student.nisn}</div>
+                      {student.nik && <div className="font-mono text-[10px] text-slate-400">NIK: {student.nik}</div>}
+                    </td>
+                    <td className="py-3 px-4">
+                      <span className="px-2.5 py-1 rounded-lg bg-blue-50 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 font-bold text-[11px] border border-blue-200 dark:border-blue-800">
+                        {student.className}
+                      </span>
+                    </td>
+                    <td className="py-3 px-4">
+                      <span
+                        className={`px-2 py-0.5 rounded-md font-bold text-[10px] ${
+                          student.gender === 'L'
+                            ? 'bg-sky-100 text-sky-800 dark:bg-sky-900/50 dark:text-sky-300'
+                            : 'bg-pink-100 text-pink-800 dark:bg-pink-900/50 dark:text-pink-300'
+                        }`}
+                      >
+                        {student.gender === 'L' ? 'Laki-Laki' : 'Perempuan'}
+                      </span>
+                    </td>
+                    <td className="py-3 px-4 font-mono text-[11px] text-slate-600 dark:text-slate-400">
+                      {student.parentPhone || '-'}
+                    </td>
+                    <td className="py-3 px-4 text-center">
+                      {student.avatar && student.avatar.length > 5 ? (
+                        <span className="inline-flex items-center space-x-1 px-2 py-0.5 bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300 rounded-md text-[10px] font-bold">
+                          <ScanFace className="w-3 h-3" />
+                          <span>Tersinkron</span>
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center space-x-1 px-2 py-0.5 bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 rounded-md text-[10px] font-bold">
+                          <span>Belum Ada</span>
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-3 px-4 text-right">
+                      <div className="flex items-center justify-end space-x-1">
+                        <button
+                          onClick={() => {
+                            setSelectedQrStudent(student);
+                            setIsQrModalOpen(true);
+                          }}
+                          className="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 dark:hover:bg-slate-800 transition-colors"
+                          title="Lihat QR Code Siswa"
+                        >
+                          <QrCode className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => handleOpenEditModal(student)}
+                          className="p-1.5 rounded-lg text-indigo-600 hover:bg-indigo-50 dark:hover:bg-slate-800 transition-colors"
+                          title="Edit Siswa"
+                        >
+                          <Edit2 className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => setDeleteConfirmId(student.id)}
+                          className="p-1.5 rounded-lg text-rose-600 hover:bg-rose-50 dark:hover:bg-slate-800 transition-colors"
+                          title="Hapus Siswa"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : (
+        /* Students Grid */
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {filteredStudents.map((student) => (
           <div
             key={student.id}
@@ -517,6 +850,7 @@ export const StudentManagementTab: React.FC<StudentManagementTabProps> = ({
           </div>
         ))}
       </div>
+      )}
 
       {filteredStudents.length === 0 && (
         <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-12 text-center text-slate-400">

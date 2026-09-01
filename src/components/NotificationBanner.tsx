@@ -12,6 +12,13 @@ import {
   Shield,
   Send,
   HardDrive,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Maximize2,
+  Minimize2,
+  Building2,
+  ShieldCheck,
+  FileCheck2,
 } from 'lucide-react';
 import { ActiveTab, LeaveRequest, SchoolConfig, ToastNotification, UserRole } from '../types';
 
@@ -21,10 +28,15 @@ interface NotificationBannerProps {
   onReviewLeave?: (leaveId?: string) => void;
   onTriggerSimulation?: () => void;
   onOpenBackupPrompt?: () => void;
+  onOpenInstallModal?: () => void;
   pendingLeaves?: LeaveRequest[];
   activeTab: ActiveTab;
   setActiveTab: (tab: ActiveTab) => void;
   onOpenMobileMenu: () => void;
+  isSidebarCollapsed?: boolean;
+  onToggleSidebar?: () => void;
+  isFullScreen?: boolean;
+  onToggleFullScreen?: () => void;
   config: SchoolConfig;
   userRole: UserRole;
 }
@@ -35,10 +47,15 @@ export const NotificationBanner: React.FC<NotificationBannerProps> = ({
   onReviewLeave = (_leaveId?: string) => {},
   onTriggerSimulation = () => {},
   onOpenBackupPrompt,
+  onOpenInstallModal,
   pendingLeaves = [],
   activeTab,
   setActiveTab,
   onOpenMobileMenu,
+  isSidebarCollapsed = false,
+  onToggleSidebar,
+  isFullScreen = false,
+  onToggleFullScreen,
   config,
   userRole,
 }) => {
@@ -54,7 +71,7 @@ export const NotificationBanner: React.FC<NotificationBannerProps> = ({
           minute: '2-digit',
           second: '2-digit',
           hour12: false,
-        }) + ' WIB'
+        }) + ' WITA'
       );
       setCurrentDateStr(
         now.toLocaleDateString('id-ID', {
@@ -74,8 +91,9 @@ export const NotificationBanner: React.FC<NotificationBannerProps> = ({
     <>
       {/* Top Fixed Header Bar */}
       <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-slate-200/80 px-4 lg:px-8 py-3 flex items-center justify-between shadow-xs">
-        {/* Left: Mobile Toggle & Breadcrumb */}
+        {/* Left: Sidebar Toggle & Breadcrumb */}
         <div className="flex items-center space-x-3">
+          {/* Mobile Menu Button */}
           <button
             onClick={onOpenMobileMenu}
             className="lg:hidden p-2 rounded-xl text-slate-600 hover:bg-slate-100 cursor-pointer"
@@ -83,6 +101,27 @@ export const NotificationBanner: React.FC<NotificationBannerProps> = ({
           >
             <Menu className="w-5 h-5" />
           </button>
+
+          {/* Desktop/Laptop Sidebar Toggle Button */}
+          {onToggleSidebar && (
+            <button
+              onClick={onToggleSidebar}
+              className="hidden lg:flex items-center space-x-1.5 px-2.5 py-1.5 rounded-xl text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 border border-slate-200/80 transition-all cursor-pointer text-xs font-bold shadow-2xs"
+              title={isSidebarCollapsed ? 'Buka Sidebar Menu (Tampilkan)' : 'Sembunyikan Sidebar (Layar Penuh / Lebar)'}
+            >
+              {isSidebarCollapsed ? (
+                <>
+                  <PanelLeftOpen className="w-4 h-4 text-indigo-600" />
+                  <span>Menu</span>
+                </>
+              ) : (
+                <>
+                  <PanelLeftClose className="w-4 h-4" />
+                  <span className="hidden xl:inline">Sembunyikan Sidebar</span>
+                </>
+              )}
+            </button>
+          )}
 
           <div className="hidden sm:flex items-center space-x-2 text-xs">
             <span className="font-bold text-slate-800 tracking-tight">
@@ -94,21 +133,85 @@ export const NotificationBanner: React.FC<NotificationBannerProps> = ({
         </div>
 
         {/* Right: Live Clock & Action Pill & Notification Trigger */}
-        <div className="flex items-center space-x-2.5">
+        <div className="flex items-center space-x-2">
+          {/* Full Screen Mode Toggle for Laptop/Projector */}
+          {onToggleFullScreen && (
+            <button
+              onClick={onToggleFullScreen}
+              className={`p-2 rounded-xl border transition-all cursor-pointer shadow-2xs flex items-center justify-center ${
+                isFullScreen
+                  ? 'bg-indigo-600 text-white border-indigo-700 shadow-indigo-600/20'
+                  : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200/80'
+              }`}
+              title={isFullScreen ? 'Keluar dari Mode Layar Penuh' : 'Mode Layar Penuh (F11 Fullscreen)'}
+            >
+              {isFullScreen ? (
+                <Minimize2 className="w-4 h-4" />
+              ) : (
+                <Maximize2 className="w-4 h-4" />
+              )}
+            </button>
+          )}
+
+          {/* Role Indicator Badge */}
+          <div
+            className={`hidden lg:flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-extrabold border ${
+              userRole === 'kepala_sekolah'
+                ? 'bg-amber-500 text-slate-950 border-amber-400 font-black'
+                : userRole === 'admin'
+                ? 'bg-blue-600 text-white border-blue-700'
+                : userRole === 'bkd_staff' || userRole === 'bkd'
+                ? 'bg-emerald-600 text-white border-emerald-700'
+                : 'bg-indigo-600 text-white border-indigo-700'
+            }`}
+          >
+            {userRole === 'kepala_sekolah' ? (
+              <Building2 className="w-3.5 h-3.5 text-slate-950" />
+            ) : userRole === 'bkd_staff' || userRole === 'bkd' ? (
+              <Building2 className="w-3.5 h-3.5 text-white" />
+            ) : userRole === 'admin' ? (
+              <ShieldCheck className="w-3.5 h-3.5 text-blue-200" />
+            ) : (
+              <FileCheck2 className="w-3.5 h-3.5 text-indigo-200" />
+            )}
+            <span>
+              {userRole === 'kepala_sekolah'
+                ? 'Mode: Kepala Sekolah'
+                : userRole === 'admin'
+                ? 'Mode: Admin SIMPEG'
+                : userRole === 'bkd_staff' || userRole === 'bkd'
+                ? 'Mode: Auditor BKD'
+                : 'Mode: Guru / GTK'}
+            </span>
+          </div>
+
           {/* Live Clock Pill */}
           <div className="hidden md:flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-slate-900 text-white text-xs font-mono font-bold shadow-xs">
             <Clock className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
             <span>{currentTime}</span>
           </div>
 
+          {/* Install / Download App Button */}
+          {onOpenInstallModal && (
+            <button
+              onClick={onOpenInstallModal}
+              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white text-xs font-extrabold shadow-2xs transition-all cursor-pointer"
+              title="Unduh & Pasang Aplikasi di HP atau Laptop (PWA)"
+            >
+              <HardDrive className="w-3.5 h-3.5 text-indigo-200" />
+              <span className="hidden sm:inline">Unduh / Pasang App</span>
+              <span className="sm:hidden">App</span>
+            </button>
+          )}
+
           {/* Pending Leaves Alert Pill if any */}
           {pendingLeaves.length > 0 && (
             <button
-              onClick={() => setActiveTab('leaves')}
+              onClick={() => setActiveTab('layanan_gtk')}
               className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-bold hover:bg-rose-100 transition-colors cursor-pointer animate-pulse"
             >
               <Bell className="w-3.5 h-3.5" />
-              <span>{pendingLeaves.length} Izin Perlu Ditinjau</span>
+              <span>{pendingLeaves.length} Izin GTK Perlu Ditinjau</span>
             </button>
           )}
 

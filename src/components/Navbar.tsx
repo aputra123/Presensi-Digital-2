@@ -91,25 +91,17 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   const navItems = [
     { id: 'dashboard' as ActiveTab, label: 'Dashboard', icon: LayoutDashboard },
-    { id: 'scan' as ActiveTab, label: 'Scan QR Presensi', icon: QrCode, badge: 'Live' },
-    { id: 'selfie' as ActiveTab, label: 'Selfie & GPS', icon: Camera },
-    { id: 'batch_class' as ActiveTab, label: 'Absensi Rombel', icon: Users },
-    { id: 'rekap' as ActiveTab, label: 'Rekapitulasi', icon: FileSpreadsheet },
+    { id: 'scan' as ActiveTab, label: 'Scan QR GTK', icon: QrCode, badge: 'Live' },
+    { id: 'selfie' as ActiveTab, label: 'Selfie & BKD', icon: Camera },
+    { id: 'rekap' as ActiveTab, label: 'Rekapitulasi GTK', icon: FileSpreadsheet },
     {
       id: 'layanan_gtk' as ActiveTab,
       label: 'Layanan & Izin GTK',
       icon: Award,
       badge: pendingGtkCount > 0 ? String(pendingGtkCount) : undefined,
     },
-    {
-      id: 'leaves' as ActiveTab,
-      label: 'Izin Siswa',
-      icon: FileText,
-      badge: pendingLeavesCount > 0 ? String(pendingLeavesCount) : undefined,
-    },
-    { id: 'cards' as ActiveTab, label: 'Kartu QR', icon: CreditCard },
-    { id: 'workspace' as ActiveTab, label: 'Cloud & Workspace', icon: Cloud },
-    { id: 'config' as ActiveTab, label: 'Pengaturan & Logo', icon: Settings },
+    { id: 'workspace' as ActiveTab, label: 'Cloud & Drive', icon: Cloud },
+    { id: 'config' as ActiveTab, label: 'Pengaturan & SIMPEG', icon: Settings },
   ];
 
   return (
@@ -175,27 +167,47 @@ export const Navbar: React.FC<NavbarProps> = ({
             <span>{session.label}</span>
           </div>
 
-          {/* 2-Role Switcher (Admin vs Guru/GTK Piket) */}
+          {/* 4-Role Switcher (Admin, Kepsek, Guru/GTK, Auditor BKD) */}
           <div className="flex items-center space-x-1 bg-slate-100 p-1 rounded-full border border-slate-200">
             <button
               onClick={() => setUserRole('admin')}
-              className={`px-3 py-1 rounded-full text-xs font-bold transition-all cursor-pointer ${
+              className={`px-2.5 py-1 rounded-full text-xs font-bold transition-all cursor-pointer ${
                 userRole === 'admin'
-                  ? 'bg-slate-900 text-white shadow-xs'
+                  ? 'bg-blue-600 text-white shadow-xs'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              Admin / Kepsek
+              Admin
             </button>
             <button
-              onClick={() => setUserRole('piket')}
-              className={`px-3 py-1 rounded-full text-xs font-bold transition-all cursor-pointer ${
-                userRole === 'piket'
+              onClick={() => setUserRole('kepala_sekolah')}
+              className={`px-2.5 py-1 rounded-full text-xs font-bold transition-all cursor-pointer ${
+                userRole === 'kepala_sekolah'
+                  ? 'bg-amber-500 text-slate-950 font-black shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Kepsek
+            </button>
+            <button
+              onClick={() => setUserRole('bkd_staff')}
+              className={`px-2.5 py-1 rounded-full text-xs font-bold transition-all cursor-pointer ${
+                userRole === 'bkd_staff' || userRole === 'bkd'
+                  ? 'bg-emerald-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Auditor BKD
+            </button>
+            <button
+              onClick={() => setUserRole('teacher')}
+              className={`px-2.5 py-1 rounded-full text-xs font-bold transition-all cursor-pointer ${
+                userRole === 'teacher' || userRole === 'piket'
                   ? 'bg-indigo-600 text-white shadow-xs'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              Guru/GTK Piket
+              Guru/GTK
             </button>
           </div>
         </div>

@@ -31,6 +31,7 @@ import {
   AttendanceType,
   AttendanceStatus,
   AcademicEvent,
+  BiometricLog,
 } from '../types';
 import { playBeepSound, checkDateIsHoliday } from '../utils/soundAndDate';
 import { CalendarOff, Lock, Unlock, Map, Navigation as NavIcon, LocateFixed } from 'lucide-react';
@@ -42,6 +43,7 @@ interface SelfieGpsTabProps {
   config: SchoolConfig;
   events?: AcademicEvent[];
   onRecordAttendance: (record: AttendanceRecord) => void;
+  onAddBiometricLog?: (log: BiometricLog) => void;
   todayDate?: string;
   existingRecords?: AttendanceRecord[];
 }
@@ -52,6 +54,7 @@ export const SelfieGpsTab: React.FC<SelfieGpsTabProps> = ({
   config,
   events = [],
   onRecordAttendance,
+  onAddBiometricLog,
   todayDate = new Date().toISOString().split('T')[0],
   existingRecords = [],
 }) => {
@@ -136,7 +139,8 @@ export const SelfieGpsTab: React.FC<SelfieGpsTabProps> = ({
           userLat,
           userLng
         );
-        const inRad = dist <= config.radiusMeter;
+        const maxRadius = config.maxRadiusMeters || 80;
+        const inRad = dist <= maxRadius;
         setGpsLocation({
           lat: userLat,
           lng: userLng,
@@ -473,6 +477,33 @@ export const SelfieGpsTab: React.FC<SelfieGpsTabProps> = ({
     };
 
     onRecordAttendance(newRecord);
+    if (onAddBiometricLog) {
+      const bioLog: BiometricLog = {
+        id: `bio_${Date.now()}`,
+        timestamp: `${todayStr} ${timeStr}`,
+        date: todayStr,
+        time: timeStr,
+        personId: selectedPersonId,
+        personName,
+        identifier,
+        personType,
+        classOrSubject: classOrSub,
+        deviceId: 'CAM-WEB-FACE-01',
+        ipOrDevice: 'Camera Web / Face Engine v4.2 (Liveness Active)',
+        status: 'verified',
+        severity: 'info',
+        matchScore: score,
+        threshold: 80,
+        livenessPassed: true,
+        gpsPassed: gpsLocation.inRadius,
+        distanceMeter: gpsLocation.distanceMeter,
+        latitude: gpsLocation.lat,
+        longitude: gpsLocation.lng,
+        cameraFacing: 'user',
+        ipAddress: '180.252.164.28',
+      };
+      onAddBiometricLog(bioLog);
+    }
     setLatestSavedRecord(newRecord);
     playBeepSound();
     confetti({ particleCount: 50, spread: 60, origin: { y: 0.7 } });
@@ -747,7 +778,7 @@ Tercatat resmi dalam Sistem Informasi Kepegawaian & Database Presensi Sekolah.`;
                       lng: gpsLocation.lng,
                       address: gpsLocation.address,
                     }}
-                    radiusMeters={config.radiusMeter}
+                    radiusMeters={config.maxRadiusMeters || 80}
                     height="200px"
                     onDistanceCalculated={(dist, inRad) => {
                       if (dist !== gpsLocation.distanceMeter || inRad !== gpsLocation.inRadius) {
@@ -762,16 +793,17 @@ Tercatat resmi dalam Sistem Informasi Kepegawaian & Database Presensi Sekolah.`;
                 </div>
               )}
 
-              <div className="flex items-center justify-between text-[11px] text-emerald-900 pt-0.5">
-                <span className="truncate max-w-[200px] text-emerald-700 font-medium">
+              <div className="flex items-center justify-between text-[11px] pt-0.5">
+                <span className={`truncate max-w-[200px] font-medium ${gpsLocation.inRadius ? 'text-emerald-700' : 'text-rose-700'}`}>
                   {gpsLocation.address}
                 </span>
-                <span className={`px-2 py-0.5 rounded-full font-bold text-[10px] ${gpsLocation.inRadius ? 'bg-emerald-200 text-emerald-900' : 'bg-rose-200 text-rose-900'}`}>
-                  {gpsLocation.inRadius ? 'VALID (Dalam Radius)' : 'LUAR RADIUS'}
+                <span className={`px-2.5 py-0.5 rounded-full font-extrabold text-[10px] tracking-wide flex items-center space-x-1 ${gpsLocation.inRadius ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' : 'bg-rose-100 text-rose-800 border border-rose-300 animate-pulse'}`}>
+                  <span>{gpsLocation.inRadius ? '✓ Dalam Radius' : '⚠️ Outside Radius'}</span>
                 </span>
               </div>
-              <div className="text-[10px] text-emerald-600 font-mono">
-                Lat: {gpsLocation.lat.toFixed(6)}, Lng: {gpsLocation.lng.toFixed(6)} • Jarak: {gpsLocation.distanceMeter}m / {config.radiusMeter}m
+              <div className={`text-[10px] font-mono flex items-center justify-between ${gpsLocation.inRadius ? 'text-emerald-600' : 'text-rose-600'}`}>
+                <span>Lat: {gpsLocation.lat.toFixed(6)}, Lng: {gpsLocation.lng.toFixed(6)}</span>
+                <span className="font-bold">Jarak: {gpsLocation.distanceMeter}m / Batas: {config.maxRadiusMeters || 80}m</span>
               </div>
             </div>
           </div>

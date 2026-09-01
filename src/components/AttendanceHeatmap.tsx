@@ -409,13 +409,13 @@ export const AttendanceHeatmap: React.FC<AttendanceHeatmapProps> = ({
             </div>
           </div>
 
-          {selectedDay.records.length > 0 && (
+          {(selectedDay.records || []).length > 0 && (
             <div className="pt-2">
               <span className="text-[11px] font-bold text-slate-700 block mb-1">
-                Daftar Log Presensi ({selectedDay.records.length} Entri):
+                Daftar Log Presensi ({(selectedDay.records || []).length} Entri):
               </span>
               <div className="max-h-36 overflow-y-auto space-y-1 pr-1">
-                {selectedDay.records.map((r) => (
+                {(selectedDay.records || []).map((r) => (
                   <div
                     key={r.id}
                     className="p-1.5 rounded-lg bg-white border border-slate-200 text-[11px] flex items-center justify-between"

@@ -25,6 +25,7 @@ import {
   Check,
   AlertCircle,
   HardDrive,
+  Trash2,
 } from 'lucide-react';
 import {
   SchoolConfig,
@@ -67,6 +68,11 @@ interface ConfigTabProps {
 
 const PRESET_LOGOS = [
   {
+    name: 'SMPN 4 Satap Taliabu Barat (Official)',
+    desc: 'Lambang Emas & Perisai Pendidikan',
+    url: '/icon-512.svg',
+  },
+  {
     name: 'Kemendikbudristek',
     desc: 'Logo Tut Wuri Handayani',
     url: 'https://upload.wikimedia.org/wikipedia/commons/thumb/9/9c/Logo_of_Ministry_of_Education_and_Culture_of_Indonesia.svg/240px-Logo_of_Ministry_of_Education_and_Culture_of_Indonesia.svg.png',
@@ -77,9 +83,9 @@ const PRESET_LOGOS = [
     url: 'https://upload.wikimedia.org/wikipedia/commons/thumb/f/fe/Kementerian_Agama_RI.png/240px-Kementerian_Agama_RI.png',
   },
   {
-    name: 'Lambang SMAN 1 Unggulan',
-    desc: 'Lambang Kebangsaan & Obor',
-    url: 'https://images.unsplash.com/photo-1599305445671-ac291c95aaa9?auto=format&fit=crop&w=200&q=80',
+    name: 'Lambang Tut Wuri Handayani Vektor',
+    desc: 'Pendidikan Nasional RI',
+    url: '/favicon.svg',
   },
   {
     name: 'Modern Academy Shield',
@@ -372,6 +378,27 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
           <button
             type="button"
             onClick={() => {
+              if (confirm('Kosongkan semua data dummy? Ini akan mereset seluruh presensi, siswa, dan guru ke database kosong bersih.')) {
+                localStorage.removeItem('school_presensi_records');
+                localStorage.removeItem('school_presensi_students');
+                localStorage.removeItem('school_presensi_teachers');
+                localStorage.removeItem('school_presensi_classes');
+                localStorage.removeItem('school_presensi_leaves');
+                localStorage.removeItem('school_presensi_gtk_services');
+                localStorage.removeItem('school_presensi_activity_logs');
+                localStorage.removeItem('school_presensi_biometric_logs');
+                window.location.reload();
+              }
+            }}
+            className="px-4 py-2 rounded-2xl bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5"
+          >
+            <Trash2 className="w-3.5 h-3.5 text-amber-600" />
+            <span>Kosongkan Data Dummy</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
               if (confirm('Apakah Anda yakin ingin mengembalikan pengaturan & data ke default?')) {
                 onResetToDefault();
               }
@@ -379,7 +406,7 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
             className="px-4 py-2 rounded-2xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5"
           >
             <RotateCcw className="w-3.5 h-3.5" />
-            <span>Reset Data Default</span>
+            <span>Reset Konfigurasi Default</span>
           </button>
         </div>
       </div>
@@ -894,12 +921,14 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
               <div className="space-y-1.5">
                 <input
                   type="number"
+                  min="10"
+                  max="5000"
                   value={formData.maxRadiusMeters}
-                  onChange={(e) => setFormData({ ...formData, maxRadiusMeters: Number(e.target.value) })}
+                  onChange={(e) => setFormData({ ...formData, maxRadiusMeters: Math.max(10, Number(e.target.value)) })}
                   className="w-full text-xs px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 font-mono font-bold text-indigo-700"
                 />
                 <div className="flex items-center space-x-1">
-                  {[50, 100, 200, 500].map((r) => (
+                  {[30, 80, 150, 250, 500].map((r) => (
                     <button
                       key={r}
                       type="button"
@@ -917,44 +946,168 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
               </div>
             </div>
           </div>
+
+          {/* Visual Warning System for Custom Geofence Radius */}
+          <div className="mt-2 p-4 rounded-2xl border transition-all">
+            {formData.maxRadiusMeters < 30 ? (
+              <div className="flex items-start space-x-3 text-rose-800 bg-rose-50/90 border border-rose-200 p-3.5 rounded-xl">
+                <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+                <div>
+                  <div className="text-xs font-black flex items-center space-x-2">
+                    <span className="px-2 py-0.5 rounded bg-rose-200 text-rose-900 text-[10px] uppercase tracking-wider font-bold">
+                      Peringatan Kritis: Radius Sangat Sempit ({formData.maxRadiusMeters}m)
+                    </span>
+                  </div>
+                  <p className="text-[11px] mt-1 leading-relaxed text-rose-700 font-medium">
+                    Akurasi GPS perangkat smartphone umumnya memiliki deviasi toleransi 10–25 meter. Radius di bawah 30 meter berpotensi tinggi memicu status palsu <strong>'Outside Radius'</strong> saat guru/siswa sebenarnya berada di dalam sekolah. Disarankan minimal 50m – 100m.
+                  </p>
+                </div>
+              </div>
+            ) : formData.maxRadiusMeters <= 200 ? (
+              <div className="flex items-start space-x-3 text-emerald-800 bg-emerald-50/90 border border-emerald-200 p-3.5 rounded-xl">
+                <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+                <div>
+                  <div className="text-xs font-black flex items-center space-x-2">
+                    <span className="px-2 py-0.5 rounded bg-emerald-200 text-emerald-900 text-[10px] uppercase tracking-wider font-bold">
+                      Radius Optimal & Terkalibrasi ({formData.maxRadiusMeters}m)
+                    </span>
+                  </div>
+                  <p className="text-[11px] mt-1 leading-relaxed text-emerald-700 font-medium">
+                    Radius mencakup perimeter gedung kelas, halaman upacara, dan kantor sekolah secara presisi. Guru/siswa di luar gerbang sekolah akan otomatis terdeteksi dengan badge <strong>'Outside Radius'</strong>.
+                  </p>
+                </div>
+              </div>
+            ) : formData.maxRadiusMeters <= 400 ? (
+              <div className="flex items-start space-x-3 text-amber-800 bg-amber-50/90 border border-amber-200 p-3.5 rounded-xl">
+                <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                <div>
+                  <div className="text-xs font-black flex items-center space-x-2">
+                    <span className="px-2 py-0.5 rounded bg-amber-200 text-amber-900 text-[10px] uppercase tracking-wider font-bold">
+                      Radius Kompleks / Kampus Luas ({formData.maxRadiusMeters}m)
+                    </span>
+                  </div>
+                  <p className="text-[11px] mt-1 leading-relaxed text-amber-700 font-medium">
+                    Cocok untuk kawasan sekolah terpadu yang memiliki lapangan olahraga luas atau area perkebunan praktik. Pastikan titik pusat koordinat berada di tengah sekolah.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-start space-x-3 text-purple-800 bg-purple-50/90 border border-purple-200 p-3.5 rounded-xl">
+                <AlertCircle className="w-5 h-5 text-purple-600 shrink-0 mt-0.5" />
+                <div>
+                  <div className="text-xs font-black flex items-center space-x-2">
+                    <span className="px-2 py-0.5 rounded bg-purple-200 text-purple-900 text-[10px] uppercase tracking-wider font-bold">
+                      Radius Sangat Lebar ({formData.maxRadiusMeters}m)
+                    </span>
+                  </div>
+                  <p className="text-[11px] mt-1 leading-relaxed text-purple-700 font-medium">
+                    Radius mencakup hingga area permukiman sekitar sekolah. Gunakan hanya jika sekolah berada di wilayah pelosok kepulauan dengan akurasi BTS/GPS satelit yang rendah.
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* Kontak BKD & Notifikasi WhatsApp / Email */}
-        <div className="p-6 rounded-[2.5rem] bg-white border border-slate-200 shadow-xs space-y-4">
-          <h3 className="font-extrabold text-sm text-slate-900 flex items-center space-x-2">
-            <Building2 className="w-4 h-4 text-purple-600" />
-            <span>Kontak Integrasi BKD & Dinas Pendidikan</span>
-          </h3>
+        {/* Kontak & Media Integrasi BKD (Drive, Email, WhatsApp) */}
+        <div className="p-6 rounded-[2.5rem] bg-white border border-slate-200 shadow-xs space-y-5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-100">
+            <div>
+              <h3 className="font-extrabold text-sm text-slate-900 flex items-center space-x-2">
+                <Building2 className="w-4 h-4 text-purple-600" />
+                <span>Integrasi 3 Saluran Media BKD Kab. Pulau Taliabu</span>
+              </h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Konfigurasi tujuan pengiriman otomatis rekapitulasi presensi Khusus ASN (PNS & PPPK) ke BKD
+              </p>
+            </div>
+            <span className="px-3 py-1 bg-purple-50 text-purple-700 font-bold text-[11px] rounded-xl border border-purple-200 self-start sm:self-auto">
+              Otomasi 3 Media
+            </span>
+          </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <label className="text-[11px] font-bold text-slate-700 block mb-1">
-                Email Verifikator Presensi BKD / Dinas
+                Link Google Drive BKD
+              </label>
+              <div className="relative">
+                <HardDrive className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="url"
+                  value={formData.bkdDriveUrl || ''}
+                  onChange={(e) => setFormData({ ...formData, bkdDriveUrl: e.target.value })}
+                  placeholder="https://drive.google.com/drive/folders/..."
+                  className="w-full text-xs pl-9 pr-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-purple-500/20 font-mono"
+                />
+              </div>
+              <p className="text-[10px] text-slate-400 mt-1">Folder Google Drive penyimpanan foto wajah & rekap</p>
+            </div>
+
+            <div>
+              <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                Email BKD
               </label>
               <div className="relative">
                 <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
                   type="email"
-                  value={formData.bkdEmail || 'bkd.presensi@jakarta.go.id'}
+                  value={formData.bkdEmail || 'bkd.taliabu@pulautaliabukab.go.id'}
                   onChange={(e) => setFormData({ ...formData, bkdEmail: e.target.value })}
+                  placeholder="bkd.taliabu@pulautaliabukab.go.id"
                   className="w-full text-xs pl-9 pr-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-purple-500/20 font-mono"
                 />
               </div>
+              <p className="text-[10px] text-slate-400 mt-1">Alamat email verifikator presensi BKD / Dinas</p>
             </div>
 
             <div>
               <label className="text-[11px] font-bold text-slate-700 block mb-1">
-                Nomor WhatsApp Hotline BKD / TU Sekolah
+                Nomor WA BKD
               </label>
               <div className="relative">
                 <Phone className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
                   type="text"
-                  value={formData.bkdWhatsApp || '6281299887766'}
+                  value={formData.bkdWhatsApp || '6282291882341'}
                   onChange={(e) => setFormData({ ...formData, bkdWhatsApp: e.target.value })}
                   placeholder="62812xxxxxxx"
                   className="w-full text-xs pl-9 pr-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-purple-500/20 font-mono"
                 />
+              </div>
+              <p className="text-[10px] text-slate-400 mt-1">Nomor WhatsApp resmi BKD Kab. Pulau Taliabu</p>
+            </div>
+          </div>
+
+          {/* Jadwal Pengiriman Otomatis Presensi Khusus ASN */}
+          <div className="p-4 bg-purple-50/70 border border-purple-100 rounded-2xl space-y-2.5">
+            <h4 className="text-xs font-extrabold text-purple-900 flex items-center space-x-1.5">
+              <Sparkles className="w-3.5 h-3.5 text-purple-600" />
+              <span>Jadwal Pengiriman Otomatis Presensi Khusus ASN (Failsafe Otomatis)</span>
+            </h4>
+            <p className="text-[11px] text-purple-800 leading-relaxed">
+              Jika admin lupa mengirim rekapitulasi, sistem secara otomatis menyiapkan & mengirim rekapitulasi presensi <strong>Khusus ASN Saja (PNS & PPPK)</strong> ke 3 media di atas:
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2 pt-1 text-[11px]">
+              <div className="p-2.5 bg-white rounded-xl border border-purple-200/60">
+                <div className="font-extrabold text-purple-900">1. Harian</div>
+                <div className="text-slate-600 text-[10px]">Setiap hari jam 15.00 WIT</div>
+              </div>
+              <div className="p-2.5 bg-white rounded-xl border border-purple-200/60">
+                <div className="font-extrabold text-purple-900">2. Mingguan</div>
+                <div className="text-slate-600 text-[10px]">Setiap hari Sabtu jam 15.00 WIT</div>
+              </div>
+              <div className="p-2.5 bg-white rounded-xl border border-purple-200/60">
+                <div className="font-extrabold text-purple-900">3. Bulanan</div>
+                <div className="text-slate-600 text-[10px]">Akhir bulan tgl 30 & 31 jam 15.00 WIT</div>
+              </div>
+              <div className="p-2.5 bg-white rounded-xl border border-purple-200/60">
+                <div className="font-extrabold text-purple-900">4. Semesteran</div>
+                <div className="text-slate-600 text-[10px]">Setiap 1 semester jam 15.00 WIT</div>
+              </div>
+              <div className="p-2.5 bg-white rounded-xl border border-purple-200/60">
+                <div className="font-extrabold text-purple-900">5. Tahunan</div>
+                <div className="text-slate-600 text-[10px]">Akhir tahun (31 Des) jam 15.00 WIT</div>
               </div>
             </div>
           </div>

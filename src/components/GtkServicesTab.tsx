@@ -567,7 +567,24 @@ export const GtkServicesTab: React.FC<GtkServicesTabProps> = ({
               </div>
 
               <div className="flex flex-wrap gap-2 pt-1">
-                {selectedService.kepsekApproval?.status !== 'approved' && (
+                {userRole === 'bkd' && (
+                  <button
+                    onClick={() => {
+                      onApproveAdmin(
+                        selectedService.id,
+                        letterNumberInput || `BKD-AUDIT/800/${Math.floor(100 + Math.random() * 900)}/${new Date().getFullYear()}`,
+                        reviewNote || 'Diverifikasi & Disahkan oleh Auditor BKD Kab. Pulau Taliabu untuk TPP.'
+                      );
+                      setSelectedService(null);
+                    }}
+                    className="px-3.5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs shadow-xs flex items-center space-x-1.5 cursor-pointer"
+                  >
+                    <Building2 className="w-3.5 h-3.5" />
+                    <span>Verifikasi & Sahkan sbg Auditor BKD</span>
+                  </button>
+                )}
+
+                {selectedService.kepsekApproval?.status !== 'approved' && userRole !== 'bkd' && (
                   <button
                     onClick={() => {
                       onApproveKepsek(
@@ -583,7 +600,7 @@ export const GtkServicesTab: React.FC<GtkServicesTabProps> = ({
                   </button>
                 )}
 
-                {selectedService.adminApproval?.status !== 'approved' && (
+                {selectedService.adminApproval?.status !== 'approved' && userRole !== 'bkd' && (
                   <button
                     onClick={() => {
                       onApproveAdmin(
