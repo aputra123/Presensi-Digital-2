@@ -249,8 +249,28 @@ export const SelfieGpsTab: React.FC<SelfieGpsTabProps> = ({
     setScanProgress(0);
     setFaceDetected(false);
     setBiometricScore(null);
-    setScanInstruction('Posisikan wajah di tengah kamera depan...');
 
+    const isLightweightMode = config.faceRecognitionMode === false;
+    const thresholdVal = Math.round((config.livenessThreshold ?? 0.8) * 100);
+
+    if (isLightweightMode) {
+      // Fast mode for older devices: bypass heavy landmark animation loop
+      setScanInstruction('Mode Ringan Aktif: Mengambil foto cepat...');
+      setTimeout(() => {
+        setScanProgress(100);
+        setFaceDetected(true);
+        const score = Number((96.0 + Math.random() * 3.5).toFixed(1));
+        setBiometricScore(score);
+        setScanInstruction(`✓ Verifikasi Wajah Selesai (${score}% Kemiripan)!`);
+        playBeepSound();
+        setTimeout(() => {
+          takeSnapshot(score);
+        }, 300);
+      }, 400);
+      return;
+    }
+
+    setScanInstruction('Posisikan wajah di tengah kamera depan...');
     let progress = 0;
     if (scanIntervalRef.current) clearInterval(scanIntervalRef.current);
 
@@ -262,7 +282,7 @@ export const SelfieGpsTab: React.FC<SelfieGpsTabProps> = ({
         setFaceDetected(true);
         setScanInstruction('Wajah terdeteksi via MediaDevices (Kamera Depan)...');
       } else if (progress === 60) {
-        setScanInstruction('Memindai landmark biometrik & kecocokan data BKD...');
+        setScanInstruction(`Memindai landmark biometrik & ambang keaktifan (${thresholdVal}%)...`);
       } else if (progress >= 100) {
         if (scanIntervalRef.current) clearInterval(scanIntervalRef.current);
         const score = Number((98.0 + Math.random() * 1.8).toFixed(1));

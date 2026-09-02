@@ -105,6 +105,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
           badgeColor: 'bg-amber-100 text-amber-800',
         },
         {
+          id: 'apel_documentation' as ActiveTab,
+          label: 'Dokumentasi Apel BKD',
+          icon: Building2,
+          badge: 'Pagi & Siang',
+          badgeColor: 'bg-sky-100 text-sky-800 font-bold',
+        },
+        {
           id: 'biometric_logs' as ActiveTab,
           label: 'Log Biometrik Wajah',
           icon: ShieldCheck,

@@ -64,6 +64,8 @@ interface ConfigTabProps {
   onSaveConfig: (newConfig: SchoolConfig) => void;
   onResetToDefault: () => void;
   onRestoreBackup?: (backupData: AppBackupData) => void;
+  onClearAllHistory?: () => void;
+  onWipeAllDummyData?: () => void;
 }
 
 const PRESET_LOGOS = [
@@ -116,6 +118,8 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
   onSaveConfig,
   onResetToDefault,
   onRestoreBackup,
+  onClearAllHistory,
+  onWipeAllDummyData,
 }) => {
   const [formData, setFormData] = useState<SchoolConfig>({
     ...config,
@@ -1038,8 +1042,18 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                   value={formData.bkdDriveUrl || ''}
                   onChange={(e) => setFormData({ ...formData, bkdDriveUrl: e.target.value })}
                   placeholder="https://drive.google.com/drive/folders/..."
-                  className="w-full text-xs pl-9 pr-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-purple-500/20 font-mono"
+                  className="w-full text-xs pl-9 pr-16 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-purple-500/20 font-mono"
                 />
+                {formData.bkdDriveUrl && (
+                  <a
+                    href={formData.bkdDriveUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 px-2 py-1 bg-purple-100 hover:bg-purple-200 text-purple-700 text-[10px] font-bold rounded-lg transition-colors"
+                  >
+                    Buka
+                  </a>
+                )}
               </div>
               <p className="text-[10px] text-slate-400 mt-1">Folder Google Drive penyimpanan foto wajah & rekap</p>
             </div>
@@ -1055,8 +1069,16 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                   value={formData.bkdEmail || 'bkd.taliabu@pulautaliabukab.go.id'}
                   onChange={(e) => setFormData({ ...formData, bkdEmail: e.target.value })}
                   placeholder="bkd.taliabu@pulautaliabukab.go.id"
-                  className="w-full text-xs pl-9 pr-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-purple-500/20 font-mono"
+                  className="w-full text-xs pl-9 pr-16 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-purple-500/20 font-mono"
                 />
+                {formData.bkdEmail && (
+                  <a
+                    href={`mailto:${formData.bkdEmail}?subject=Presensi%20SMPN%204%20Satap%20Taliabu`}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 px-2 py-1 bg-purple-100 hover:bg-purple-200 text-purple-700 text-[10px] font-bold rounded-lg transition-colors"
+                  >
+                    Kirim
+                  </a>
+                )}
               </div>
               <p className="text-[10px] text-slate-400 mt-1">Alamat email verifikator presensi BKD / Dinas</p>
             </div>
@@ -1072,10 +1094,177 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                   value={formData.bkdWhatsApp || '6282291882341'}
                   onChange={(e) => setFormData({ ...formData, bkdWhatsApp: e.target.value })}
                   placeholder="62812xxxxxxx"
-                  className="w-full text-xs pl-9 pr-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-purple-500/20 font-mono"
+                  className="w-full text-xs pl-9 pr-16 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-purple-500/20 font-mono"
                 />
+                {formData.bkdWhatsApp && (
+                  <a
+                    href={`https://wa.me/${formData.bkdWhatsApp.replace(/[^0-9]/g, '')}?text=Halo%20Admin%20BKD%20Taliabu`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 px-2 py-1 bg-emerald-100 hover:bg-emerald-200 text-emerald-700 text-[10px] font-bold rounded-lg transition-colors"
+                  >
+                    Chat
+                  </a>
+                )}
               </div>
               <p className="text-[10px] text-slate-400 mt-1">Nomor WhatsApp resmi BKD Kab. Pulau Taliabu</p>
+            </div>
+          </div>
+
+          {/* Pengaturan Biometrik & Liveness Wajah */}
+          <div className="p-5 bg-gradient-to-r from-slate-50 via-indigo-50/40 to-slate-50 rounded-2xl border border-indigo-100 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-indigo-100">
+              <div className="flex items-center space-x-2">
+                <UserCheck className="w-4 h-4 text-indigo-600" />
+                <h4 className="text-xs font-extrabold text-slate-900">
+                  Pengenalan Wajah & Ambang Batas Biometrik (Liveness Threshold)
+                </h4>
+              </div>
+              <span className="text-[11px] font-mono font-bold text-indigo-700 bg-white px-2.5 py-0.5 rounded-lg border border-indigo-200 self-start sm:self-auto">
+                Tingkat Sensitivitas: {((formData.livenessThreshold ?? 0.8) * 100).toFixed(0)}%
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Toggle Mode Pengenalan Wajah Real-Time */}
+              <div className="p-4 bg-white rounded-xl border border-slate-200 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-800">Mode Pengenalan Wajah (Real-time Detection)</span>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={formData.faceRecognitionMode !== false}
+                      onChange={(e) => setFormData({ ...formData, faceRecognitionMode: e.target.checked })}
+                      className="sr-only peer"
+                    />
+                    <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                  </label>
+                </div>
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  {formData.faceRecognitionMode !== false
+                    ? '✓ Aktif: Mendeteksi kontur wajah & landmark real-time pada kamera. Disarankan untuk perangkat modern.'
+                    : '⚡ Nonaktif: Mode ringan (Lightweight Mode) untuk performa maksimal pada perangkat lama/RAM rendah.'}
+                </p>
+              </div>
+
+              {/* Slider Ambang Batas Liveness Biometrik */}
+              <div className="p-4 bg-white rounded-xl border border-slate-200 space-y-2">
+                <div className="flex items-center justify-between text-xs font-bold text-slate-800">
+                  <span>Ambang Batas Keaktifan Biometrik (0.0 - 1.0)</span>
+                  <span className="font-mono text-indigo-600">{(formData.livenessThreshold ?? 0.8).toFixed(2)}</span>
+                </div>
+                <input
+                  type="range"
+                  min="0.10"
+                  max="1.00"
+                  step="0.05"
+                  value={formData.livenessThreshold ?? 0.8}
+                  onChange={(e) => setFormData({ ...formData, livenessThreshold: parseFloat(e.target.value) })}
+                  className="w-full accent-indigo-600 cursor-pointer"
+                />
+                <div className="flex justify-between text-[10px] text-slate-400">
+                  <span>0.1 (Sangat Longgar)</span>
+                  <span className="font-bold text-indigo-600">0.8 (Standar Resmi BKD)</span>
+                  <span>1.0 (Super Ketat)</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Integrasi Google Maps Platform */}
+          <div className="p-5 bg-gradient-to-r from-slate-50 via-sky-50/40 to-slate-50 rounded-2xl border border-sky-100 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-sky-100">
+              <div className="flex items-center space-x-2">
+                <MapPin className="w-4 h-4 text-sky-600" />
+                <h4 className="text-xs font-extrabold text-slate-900">
+                  Integrasi Google Maps Platform & Peta Geofence
+                </h4>
+              </div>
+              <span className="text-[11px] font-mono font-bold text-sky-700 bg-white px-2.5 py-0.5 rounded-lg border border-sky-200 self-start sm:self-auto">
+                Maps API Ready
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                  Google Maps API Key (Opsional / Custom Cloud Key)
+                </label>
+                <input
+                  type="text"
+                  value={formData.googleMapsApiKey || ''}
+                  onChange={(e) => setFormData({ ...formData, googleMapsApiKey: e.target.value })}
+                  placeholder="AIzaSy... (Biarkan kosong untuk Maps Demo Key bawaan)"
+                  className="w-full text-xs px-3.5 py-2.5 bg-white border border-slate-200 rounded-2xl font-mono text-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500/20"
+                />
+                <p className="text-[10px] text-slate-400 mt-1">
+                  Sistem mendukung Google Maps Platform resmi dengan penandaan radius presisi tinggi.
+                </p>
+              </div>
+
+              <div>
+                <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                  Mesin Peta Utama (Default Map Engine)
+                </label>
+                <select
+                  value={formData.defaultMapEngine || 'google_maps'}
+                  onChange={(e) => setFormData({ ...formData, defaultMapEngine: e.target.value as any })}
+                  className="w-full text-xs px-3.5 py-2.5 bg-white border border-slate-200 rounded-2xl font-bold text-slate-800"
+                >
+                  <option value="google_maps">🗺️ Google Maps Platform (Rekomendasi Satelit & Vektor)</option>
+                  <option value="leaflet">📍 Leaflet OpenStreetMap (Mode Offline / Fallback)</option>
+                </select>
+                <p className="text-[10px] text-slate-400 mt-1">
+                  Pilihan mesin peta yang aktif pada panel presensi selfie & geofencing.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Manajemen Penghapusan Data & Riwayat Terkait */}
+          <div className="p-5 bg-rose-50/70 border border-rose-200 rounded-2xl space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <Trash2 className="w-4 h-4 text-rose-600" />
+                <h4 className="text-xs font-extrabold text-rose-950">
+                  Penghapusan Riwayat Otomatis & Pembersihan Data Dummy
+                </h4>
+              </div>
+              <span className="text-[10px] font-bold px-2 py-0.5 bg-rose-200 text-rose-900 rounded-md">
+                Cascade Delete Active
+              </span>
+            </div>
+
+            <p className="text-[11px] text-rose-800 leading-relaxed">
+              <strong>Fungsi Hapus Otomatis Terintegrasi:</strong> Ketika data Guru, Siswa, atau Kelas dihapus/dikosongkan, seluruh riwayat presensi, permohonan izin, log biometrik, dan riwayat aktivitas yang terkait dengan data tersebut akan <em>dihapus secara otomatis</em> dari sistem untuk mencegah penumpukan data yatim (orphaned records).
+            </p>
+
+            <div className="flex flex-wrap gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  if (confirm('PERINGATAN: Apakah Anda yakin ingin menghapus SELURUH riwayat presensi, log biometrik, izin, dan aktivitas dummy? Data master Guru dan Siswa akan tetap dipertahankan.')) {
+                    if (onClearAllHistory) onClearAllHistory();
+                  }
+                }}
+                className="px-3.5 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs flex items-center space-x-1.5"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Kosongkan Semua Riwayat & Log</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (confirm('PERINGATAN KRITIS: Apakah Anda yakin ingin menghapus SEMUA data dummy aplikasi dan memulai dengan database sekolah kosong bersih?')) {
+                    if (onWipeAllDummyData) onWipeAllDummyData();
+                  }
+                }}
+                className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-rose-300 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs flex items-center space-x-1.5"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Reset Total ke Database Kosong Bersih</span>
+              </button>
             </div>
           </div>
 

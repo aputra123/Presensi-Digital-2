@@ -168,10 +168,36 @@ export interface SchoolConfig {
   principalName?: string;
   principalNip?: string;
   adminName?: string;
+  faceRecognitionMode?: boolean; // Real-time facial feature detection on/off for older devices
+  livenessThreshold?: number; // Biometric sensitivity threshold (0.0 to 1.0)
+  googleMapsApiKey?: string; // Optional custom Google Maps API key
+  defaultMapEngine?: 'google_maps' | 'leaflet';
+}
+
+export interface ApelDocumentation {
+  id: string;
+  type: 'apel_pagi' | 'apel_siang';
+  title: string;
+  date: string; // YYYY-MM-DD
+  time: string; // HH:mm:ss
+  gmtOffset: string; // e.g. "GMT+8 (WITA)"
+  latitude: number;
+  longitude: number;
+  placeName: string; // Nama tempat e.g. "Lapangan Upacara SMPN 4 Satap Taliabu Barat"
+  village: string; // Desa/Kelurahan e.g. "Desa Pancoran"
+  district: string; // Kecamatan e.g. "Kecamatan Taliabu Barat"
+  regency: string; // Kabupaten e.g. "Kabupaten Pulau Taliabu"
+  province: string; // Provinsi e.g. "Maluku Utara"
+  photoUrl: string; // Captured photo / watermark base64
+  leaderName?: string; // Pembina Apel
+  attendanceCount?: number; // Jumlah Peserta Apel
+  notes?: string;
+  createdAt: string;
 }
 
 export type ActivityLogCategory =
   | 'attendance'
+  | 'apel_doc'
   | 'gtk_service'
   | 'leave'
   | 'master_data'
@@ -255,6 +281,7 @@ export interface AppBackupData {
   biometricLogs?: BiometricLog[];
   activityLogs?: ActivityLog[];
   dutyRoster?: DutyAssignment[];
+  apelDocs?: ApelDocumentation[];
 }
 
 export type DayOfWeek = 'senin' | 'selasa' | 'rabu' | 'kamis' | 'jumat' | 'sabtu';
@@ -298,6 +325,7 @@ export type ActiveTab =
   | 'dashboard'
   | 'scan'
   | 'selfie'
+  | 'apel_documentation'
   | 'biometric_logs'
   | 'duty_roster'
   | 'batch_class'

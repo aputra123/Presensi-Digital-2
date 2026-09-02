@@ -15,6 +15,7 @@ import {
   BiometricLog,
   AppBackupData,
   DutyAssignment,
+  ApelDocumentation,
 } from './types';
 import {
   INITIAL_ATTENDANCE_RECORDS,
@@ -49,6 +50,7 @@ import { StudentManagementTab } from './components/StudentManagementTab';
 import { TeacherManagementTab } from './components/TeacherManagementTab';
 import { TeacherDutyRosterTab } from './components/TeacherDutyRosterTab';
 import { StudentCardsTab } from './components/StudentCardsTab';
+import { ApelDocumentationTab } from './components/ApelDocumentationTab';
 import { AcademicCalendarTab } from './components/AcademicCalendarTab';
 import { ConfigTab } from './components/ConfigTab';
 import { PrintModal } from './components/PrintModal';
@@ -172,6 +174,16 @@ export default function App() {
       return Array.isArray(parsed) ? parsed : INITIAL_DUTY_ROSTER;
     } catch {
       return INITIAL_DUTY_ROSTER;
+    }
+  });
+
+  const [apelDocs, setApelDocs] = useState<ApelDocumentation[]>(() => {
+    try {
+      const saved = localStorage.getItem('school_presensi_apel_docs');
+      const parsed = saved ? JSON.parse(saved) : null;
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
     }
   });
 
@@ -420,6 +432,14 @@ export default function App() {
 
   useEffect(() => {
     try {
+      localStorage.setItem('school_presensi_apel_docs', JSON.stringify(apelDocs));
+    } catch (e) {
+      console.error(e);
+    }
+  }, [apelDocs]);
+
+  useEffect(() => {
+    try {
       localStorage.setItem('school_presensi_is_system_locked', String(isSystemLocked));
     } catch (e) {
       console.error(e);
@@ -619,8 +639,9 @@ export default function App() {
       config,
       activityLogs,
       biometricLogs,
+      apelDocs,
     };
-  }, [records, students, teachers, classes, leaves, gtkServices, events, config, activityLogs, biometricLogs]);
+  }, [records, students, teachers, classes, leaves, gtkServices, events, config, activityLogs, biometricLogs, apelDocs]);
 
   // Download Local JSON Backup file
   const handleDownloadBackupJson = useCallback(() => {
@@ -693,6 +714,7 @@ export default function App() {
     if (backupData.events) setEvents(backupData.events);
     if (backupData.activityLogs) setActivityLogs(backupData.activityLogs);
     if (backupData.biometricLogs) setBiometricLogs(backupData.biometricLogs);
+    if (backupData.apelDocs) setApelDocs(backupData.apelDocs);
 
     const notif: ToastNotification = {
       id: `notif_rst_${Date.now()}`,
@@ -896,7 +918,15 @@ export default function App() {
   };
 
   const handleDeleteStudent = (id: string) => {
+    const student = students.find((s) => s.id === id);
     setStudents((prev) => prev.filter((s) => s.id !== id));
+    // Cascade delete related attendance, leaves, biometric logs, and audit logs
+    if (student) {
+      setRecords((prev) => prev.filter((r) => r.personId !== id && r.identifier !== student.nisn));
+      setLeaves((prev) => prev.filter((l) => l.personId !== id && l.nisnOrNip !== student.nisn));
+      setBiometricLogs((prev) => prev.filter((b) => b.personId !== id && b.identifier !== student.nisn));
+      setActivityLogs((prev) => prev.filter((a) => a.entityId !== id));
+    }
   };
 
   // Teacher CRUD
@@ -917,7 +947,103 @@ export default function App() {
   };
 
   const handleDeleteTeacher = (id: string) => {
+    const teacher = teachers.find((t) => t.id === id);
     setTeachers((prev) => prev.filter((t) => t.id !== id));
+    // Cascade delete related attendance, leaves, GTK services, duty assignments, biometric logs, and audit logs
+    if (teacher) {
+      setRecords((prev) => prev.filter((r) => r.personId !== id && r.identifier !== teacher.nip));
+      setLeaves((prev) => prev.filter((l) => l.personId !== id && l.nisnOrNip !== teacher.nip));
+      setGtkServices((prev) => prev.filter((g) => g.teacherId !== id && g.nip !== teacher.nip));
+      setDutyRoster((prev) => prev.filter((d) => d.teacherId !== id && d.nip !== teacher.nip));
+      setBiometricLogs((prev) => prev.filter((b) => b.personId !== id && b.identifier !== teacher.nip));
+      setActivityLogs((prev) => prev.filter((a) => a.entityId !== id));
+    }
+  };
+
+  // Apel Documentation Handlers
+  const handleAddApelDoc = (newDoc: ApelDocumentation) => {
+    setApelDocs((prev) => [newDoc, ...prev]);
+    const notif: ToastNotification = {
+      id: `notif_apel_${Date.now()}`,
+      title: 'Dokumentasi Apel Berhasil Disimpan',
+      message: `Foto ${newDoc.type === 'apel_pagi' ? 'Apel Pagi' : 'Apel Siang'} ${newDoc.date} dengan geolokasi presisi telah dicatat ke arsip BKD.`,
+      type: 'system',
+      timestamp: newDoc.time + ' WITA',
+      read: false,
+    };
+    setNotifications((prev) => [notif, ...prev.slice(0, 8)]);
+  };
+
+  const handleDeleteApelDoc = (id: string) => {
+    setApelDocs((prev) => prev.filter((d) => d.id !== id));
+  };
+
+  // Clear All History & Logs Handler
+  const handleClearAllHistory = () => {
+    setRecords([]);
+    setLeaves([]);
+    setGtkServices([]);
+    setBiometricLogs([]);
+    setActivityLogs([]);
+    setApelDocs([]);
+    try {
+      localStorage.setItem('school_presensi_records', JSON.stringify([]));
+      localStorage.setItem('school_presensi_leaves', JSON.stringify([]));
+      localStorage.setItem('school_presensi_gtk_services', JSON.stringify([]));
+      localStorage.setItem('school_presensi_biometric_logs', JSON.stringify([]));
+      localStorage.setItem('school_presensi_activity_logs', JSON.stringify([]));
+      localStorage.setItem('school_presensi_apel_docs', JSON.stringify([]));
+    } catch (e) {
+      console.error(e);
+    }
+
+    const notif: ToastNotification = {
+      id: `notif_clr_hist_${Date.now()}`,
+      title: 'Seluruh Riwayat & Log Dikosongkan',
+      message: 'Riwayat presensi, izin, log biometrik, aktivitas, dan foto apel telah dibersihkan secara total.',
+      type: 'system',
+      timestamp: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WITA',
+      read: false,
+    };
+    setNotifications((prev) => [notif, ...prev.slice(0, 8)]);
+  };
+
+  // Total Wipe All Dummy Data
+  const handleWipeAllDummyData = () => {
+    setStudents([]);
+    setTeachers([]);
+    setClasses([]);
+    setRecords([]);
+    setLeaves([]);
+    setGtkServices([]);
+    setBiometricLogs([]);
+    setActivityLogs([]);
+    setDutyRoster([]);
+    setApelDocs([]);
+    try {
+      localStorage.setItem('school_presensi_students', JSON.stringify([]));
+      localStorage.setItem('school_presensi_teachers', JSON.stringify([]));
+      localStorage.setItem('school_presensi_classes', JSON.stringify([]));
+      localStorage.setItem('school_presensi_records', JSON.stringify([]));
+      localStorage.setItem('school_presensi_leaves', JSON.stringify([]));
+      localStorage.setItem('school_presensi_gtk_services', JSON.stringify([]));
+      localStorage.setItem('school_presensi_biometric_logs', JSON.stringify([]));
+      localStorage.setItem('school_presensi_activity_logs', JSON.stringify([]));
+      localStorage.setItem('school_presensi_duty_roster', JSON.stringify([]));
+      localStorage.setItem('school_presensi_apel_docs', JSON.stringify([]));
+    } catch (e) {
+      console.error(e);
+    }
+
+    const notif: ToastNotification = {
+      id: `notif_wipe_${Date.now()}`,
+      title: 'Database Bersih Siap Digunakan',
+      message: 'Seluruh data dummy dan histori telah dihapus secara tuntas. Aplikasi siap menerima data riil sekolah.',
+      type: 'system',
+      timestamp: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WITA',
+      read: false,
+    };
+    setNotifications((prev) => [notif, ...prev.slice(0, 8)]);
   };
 
   // Academic Events
@@ -1294,6 +1420,17 @@ export default function App() {
             />
           )}
 
+          {activeTab === 'apel_documentation' && (
+            <ApelDocumentationTab
+              config={config}
+              teachers={teachers}
+              apelDocs={apelDocs}
+              onAddApelDoc={handleAddApelDoc}
+              onDeleteApelDoc={handleDeleteApelDoc}
+              onClearAllApelDocs={() => setApelDocs([])}
+            />
+          )}
+
           {activeTab === 'calendar' && (
             <AcademicCalendarTab
               events={events}
@@ -1317,6 +1454,8 @@ export default function App() {
               onSaveConfig={setConfig}
               onResetToDefault={handleResetToDefault}
               onRestoreBackup={handleRestoreBackup}
+              onClearAllHistory={handleClearAllHistory}
+              onWipeAllDummyData={handleWipeAllDummyData}
             />
           )}
         </main>
