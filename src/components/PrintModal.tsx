@@ -15,7 +15,7 @@ import {
   ArrowUp,
   ArrowDown,
 } from 'lucide-react';
-import { AttendanceRecord, SchoolConfig, Student } from '../types';
+import { AttendanceRecord, SchoolConfig, Student, Teacher } from '../types';
 import { formatDateIndo } from '../utils/soundAndDate';
 
 interface PrintModalProps {
@@ -23,6 +23,7 @@ interface PrintModalProps {
   config: SchoolConfig;
   records?: AttendanceRecord[];
   students?: Student[];
+  teachers?: Teacher[];
   todayDate?: string;
   dateRangeLabel?: string;
   customTitle?: string;
@@ -33,6 +34,7 @@ export const PrintModal: React.FC<PrintModalProps> = ({
   config,
   records = [],
   students = [],
+  teachers: _teachers = [],
   todayDate = new Date().toISOString().split('T')[0],
   dateRangeLabel,
   customTitle,

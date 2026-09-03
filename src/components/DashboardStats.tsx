@@ -254,6 +254,24 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
 
   // Weekly average daily attendance calculation (Monday - Friday)
   const weeklyAttendanceStats = useMemo(() => {
+    if (safeRecords.length === 0) {
+      const emptyDailyRates = [
+        { day: 'Senin', rate: 0, present: 0, total: totalRegistered || 0 },
+        { day: 'Selasa', rate: 0, present: 0, total: totalRegistered || 0 },
+        { day: 'Rabu', rate: 0, present: 0, total: totalRegistered || 0 },
+        { day: 'Kamis', rate: 0, present: 0, total: totalRegistered || 0 },
+        { day: 'Jumat', rate: 0, present: 0, total: totalRegistered || 0 },
+      ];
+      return {
+        dailyRates: emptyDailyRates,
+        avgDailyRate: 0,
+        diff: -attendanceTarget,
+        isGoalMet: false,
+        isClose: false,
+        bestDay: emptyDailyRates[0],
+      };
+    }
+
     const currentRate = attendanceRate > 0 ? attendanceRate : 96.5;
     const dailyRates = [
       { day: 'Senin', rate: 96.8, present: Math.round(totalRegistered * 0.968) || 35, total: totalRegistered || 36 },
@@ -278,28 +296,32 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
       isClose,
       bestDay,
     };
-  }, [attendanceRate, totalRegistered, totalPresentToday, attendanceTarget]);
+  }, [safeRecords.length, attendanceRate, totalRegistered, totalPresentToday, attendanceTarget]);
 
   // Automated detection of classes with attendance < 70% in the last 24 hours
   const lowAttendanceClasses = useMemo(() => {
+    // If no attendance has ever been recorded, data is empty - no false alerts
+    if (safeRecords.length === 0 || studentRecords.length === 0) {
+      return [];
+    }
+
     return safeClasses.map((c) => {
       const classStudents = safeStudents.filter((s) => s.classId === c.id || s.className === c.name);
       const totalInClass = classStudents.length || 6;
       const presentCount = studentRecords.filter(
         (r) => (r.classOrSubject === c.name || r.classOrSubject.includes(c.name)) && (r.status === 'hadir' || r.status === 'terlambat')
       ).length;
-      // In realistic mock, calculate or use simulated rate
-      const simulatedRate = presentCount > 0 ? Math.round((presentCount / totalInClass) * 100) : (c.name.includes('XII') ? 66 : 85);
+      const simulatedRate = Math.round((presentCount / totalInClass) * 100);
       return {
         id: c.id,
         name: c.name,
         total: totalInClass,
-        present: presentCount > 0 ? presentCount : Math.round((simulatedRate / 100) * totalInClass),
+        present: presentCount,
         rate: simulatedRate,
         isBelowThreshold: simulatedRate < 70,
       };
     }).filter((c) => c.isBelowThreshold);
-  }, [safeClasses, safeStudents, studentRecords]);
+  }, [safeRecords.length, safeClasses, safeStudents, studentRecords]);
 
   // Automated Alert System: Trigger Toast Notification if attendance drops below 70% in last 24 hours
   useEffect(() => {
@@ -341,6 +363,51 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
 
   // 4-Week Historical Trend of Overall School Attendance Percentages
   const historical4WeeksData = useMemo(() => {
+    if (safeRecords.length === 0) {
+      return [
+        {
+          week: 'Minggu 1',
+          shortWeek: 'M-1',
+          attendanceRate: 0,
+          targetRate: 95.0,
+          totalHadir: 0,
+          totalTarget: totalRegistered || 0,
+          sakitIzin: 0,
+          alpa: 0,
+        },
+        {
+          week: 'Minggu 2',
+          shortWeek: 'M-2',
+          attendanceRate: 0,
+          targetRate: 95.0,
+          totalHadir: 0,
+          totalTarget: totalRegistered || 0,
+          sakitIzin: 0,
+          alpa: 0,
+        },
+        {
+          week: 'Minggu 3',
+          shortWeek: 'M-3',
+          attendanceRate: 0,
+          targetRate: 95.0,
+          totalHadir: 0,
+          totalTarget: totalRegistered || 0,
+          sakitIzin: 0,
+          alpa: 0,
+        },
+        {
+          week: 'Minggu 4',
+          shortWeek: 'M-4 (Kini)',
+          attendanceRate: 0,
+          targetRate: 95.0,
+          totalHadir: 0,
+          totalTarget: totalRegistered || 0,
+          sakitIzin: 0,
+          alpa: 0,
+        },
+      ];
+    }
+
     return [
       {
         week: 'Minggu 1 (03-08 Ags)',
@@ -383,7 +450,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
         alpa: alpaCount,
       },
     ];
-  }, [attendanceRate, totalPresentToday, totalRegistered, sakitCount, izinCount, alpaCount]);
+  }, [safeRecords.length, attendanceRate, totalPresentToday, totalRegistered, sakitCount, izinCount, alpaCount]);
 
   // Weekly attendance ratio data (Hadir vs Izin/Sakit) for the current week
   const weeklyAttendanceRatioData = useMemo(() => {
@@ -396,6 +463,22 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
       { name: 'Sabtu', offset: 1, dateFallback: '2026-08-29' },
     ];
 
+    if (safeRecords.length === 0) {
+      return dayLabels.map((d) => ({
+        day: d.name,
+        hadir: 0,
+        izinSakit: 0,
+        alpa: 0,
+        total: 0,
+        hadirPercentage: 0,
+        izinPercentage: 0,
+        ratioLabel: '0% : 0%',
+        rateHadir: 0,
+        rateIzin: 0,
+        date: d.dateFallback,
+      }));
+    }
+
     return dayLabels.map((d, idx) => {
       // Find matching date records if any
       const matchingRecs = safeRecords.filter((r) => r.date === d.dateFallback);
@@ -403,8 +486,8 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
       let izinSakitVal = matchingRecs.filter((r) => r.status === 'izin' || r.status === 'sakit').length;
       let alpaVal = matchingRecs.filter((r) => r.status === 'alpa').length;
 
-      // Realistic values for demonstration if date has few records
-      if (hadirVal === 0) {
+      // Realistic values for demonstration if date has few records and not completely empty system
+      if (hadirVal === 0 && safeRecords.length > 0) {
         const presets = [
           { h: 28, is: 2, a: 0 },
           { h: 29, is: 1, a: 0 },
@@ -428,9 +511,12 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
         izinSakit: izinSakitVal,
         alpa: alpaVal,
         total: totalActive,
+        hadirPercentage,
+        izinPercentage,
         ratioLabel: `${hadirPercentage}% : ${izinPercentage}%`,
         rateHadir: hadirPercentage,
         rateIzin: izinPercentage,
+        date: d.dateFallback,
       };
     });
   }, [safeRecords, todayStr, totalPresentToday, sakitCount, izinCount, alpaCount]);
@@ -508,22 +594,31 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
 
       // Realistic values for past days if live logs not yet recorded for that date
       if (successes === 0 && failures === 0) {
-        const fallbacks = [
-          { s: 28, f: 1, h: 26, t: 2, iz: 1, th: 7 },
-          { s: 31, f: 0, h: 29, t: 2, iz: 1, th: 8 },
-          { s: 29, f: 2, h: 27, t: 2, iz: 2, th: 7 },
-          { s: 33, f: 1, h: 30, t: 3, iz: 1, th: 8 },
-          { s: 30, f: 1, h: 28, t: 2, iz: 2, th: 7 },
-          { s: 34, f: 0, h: 31, t: 3, iz: 1, th: 8 },
-          { s: Math.max(hadirCount + terlambatCount, 28), f: Math.max(alpaCount, 1), h: hadirCount, t: terlambatCount, iz: sakitCount + izinCount, th: teacherRecords.length },
-        ];
-        const fb = fallbacks[6 - i] || fallbacks[0];
-        successes = fb.s;
-        failures = fb.f;
-        hadirVal = fb.h;
-        terlambatVal = fb.t;
-        izinVal = fb.iz;
-        teacherHadir = fb.th;
+        if (safeRecords.length === 0) {
+          successes = 0;
+          failures = 0;
+          hadirVal = 0;
+          terlambatVal = 0;
+          izinVal = 0;
+          teacherHadir = 0;
+        } else {
+          const fallbacks = [
+            { s: 28, f: 1, h: 26, t: 2, iz: 1, th: 7 },
+            { s: 31, f: 0, h: 29, t: 2, iz: 1, th: 8 },
+            { s: 29, f: 2, h: 27, t: 2, iz: 2, th: 7 },
+            { s: 33, f: 1, h: 30, t: 3, iz: 1, th: 8 },
+            { s: 30, f: 1, h: 28, t: 2, iz: 2, th: 7 },
+            { s: 34, f: 0, h: 31, t: 3, iz: 1, th: 8 },
+            { s: Math.max(hadirCount + terlambatCount, 28), f: Math.max(alpaCount, 1), h: hadirCount, t: terlambatCount, iz: sakitCount + izinCount, th: teacherRecords.length },
+          ];
+          const fb = fallbacks[6 - i] || fallbacks[0];
+          successes = fb.s;
+          failures = fb.f;
+          hadirVal = fb.h;
+          terlambatVal = fb.t;
+          izinVal = fb.iz;
+          teacherHadir = fb.th;
+        }
       }
 
       const total = successes + failures || 1;
@@ -535,7 +630,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
         successes,
         failures,
         total,
-        rate,
+        rate: safeRecords.length === 0 ? 0 : rate,
         hadir: hadirVal,
         terlambat: terlambatVal,
         izin: izinVal,
@@ -548,6 +643,25 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
 
   // Dynamic Chart Data based on timeRange
   const trendChartData = useMemo(() => {
+    if (safeRecords.length === 0) {
+      if (timeRange === 'today') {
+        return [
+          { label: '06:00 - 06:30', hadir: 0, terlambat: 0, izin: 0, alpa: 0 },
+          { label: '06:30 - 07:00', hadir: 0, terlambat: 0, izin: 0, alpa: 0 },
+          { label: '07:00 - 07:15', hadir: 0, terlambat: 0, izin: 0, alpa: 0 },
+          { label: '07:15 - 08:00', hadir: 0, terlambat: 0, izin: 0, alpa: 0 },
+          { label: 'Setelah 08:00', hadir: 0, terlambat: 0, izin: 0, alpa: 0 },
+        ];
+      }
+      return [
+        { label: 'Senin', hadir: 0, terlambat: 0, izin: 0, alpa: 0, rate: 0 },
+        { label: 'Selasa', hadir: 0, terlambat: 0, izin: 0, alpa: 0, rate: 0 },
+        { label: 'Rabu', hadir: 0, terlambat: 0, izin: 0, alpa: 0, rate: 0 },
+        { label: 'Kamis', hadir: 0, terlambat: 0, izin: 0, alpa: 0, rate: 0 },
+        { label: 'Jumat', hadir: 0, terlambat: 0, izin: 0, alpa: 0, rate: 0 },
+      ];
+    }
+
     if (timeRange === 'today') {
       return [
         { label: '06:00 - 06:30', hadir: 8, terlambat: 0, izin: 0, alpa: 0 },
@@ -584,10 +698,12 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
       { label: 'September 2026', hadir: 530, terlambat: 38, izin: 22, alpa: 6, rate: 96 },
       { label: 'Oktober 2026 (Est.)', hadir: 540, terlambat: 30, izin: 18, alpa: 4, rate: 98 },
     ];
-  }, [timeRange, hadirCount, terlambatCount, sakitCount, izinCount, alpaCount, attendanceRate]);
+  }, [safeRecords.length, timeRange, hadirCount, terlambatCount, sakitCount, izinCount, alpaCount, attendanceRate]);
 
   // Data Donut Komposisi Status
-  const statusPieData = [
+  const statusPieData = safeRecords.length === 0 ? [
+    { name: 'Belum Ada Absensi', value: 1, color: '#94A3B8' }
+  ] : [
     { name: 'Hadir Tepat Waktu', value: Math.max(hadirCount, 18), color: '#10B981' },
     { name: 'Terlambat', value: Math.max(terlambatCount, 2), color: '#F59E0B' },
     { name: 'Izin & Sakit', value: Math.max(sakitCount + izinCount, 2), color: '#6366F1' },
@@ -600,12 +716,12 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     const presentInClass = studentRecords.filter(
       (r) => r.classOrSubject === c.name && (r.status === 'hadir' || r.status === 'terlambat')
     ).length;
-    const count = presentInClass > 0 ? presentInClass : Math.min(classStudents.length, 5);
+    const count = safeRecords.length === 0 ? 0 : (presentInClass > 0 ? presentInClass : Math.min(classStudents.length, 5));
     return {
       name: c.name,
       hadir: count,
       total: classStudents.length || 6,
-      rate: Math.round((count / (classStudents.length || 6)) * 100),
+      rate: count === 0 ? 0 : Math.round((count / (classStudents.length || 6)) * 100),
     };
   });
 
@@ -614,25 +730,25 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     {
       status: 'PNS',
       total: safeTeachers.filter((t) => t.employmentStatus === 'PNS').length || 3,
-      hadir: teacherRecords.filter((r) => r.employmentStatus === 'PNS' || safeTeachers.find((t) => t.id === r.personId)?.employmentStatus === 'PNS').length || 3,
+      hadir: safeRecords.length === 0 ? 0 : (teacherRecords.filter((r) => r.employmentStatus === 'PNS' || safeTeachers.find((t) => t.id === r.personId)?.employmentStatus === 'PNS').length || 3),
       badge: 'Pegawai Negeri Sipil',
     },
     {
       status: 'PPPK',
       total: safeTeachers.filter((t) => t.employmentStatus === 'PPPK').length || 1,
-      hadir: teacherRecords.filter((r) => r.employmentStatus === 'PPPK' || safeTeachers.find((t) => t.id === r.personId)?.employmentStatus === 'PPPK').length || 1,
+      hadir: safeRecords.length === 0 ? 0 : (teacherRecords.filter((r) => r.employmentStatus === 'PPPK' || safeTeachers.find((t) => t.id === r.personId)?.employmentStatus === 'PPPK').length || 1),
       badge: 'PPPK Penuh Waktu',
     },
     {
       status: 'PPPK PW',
       total: safeTeachers.filter((t) => t.employmentStatus === 'PPPK_PW').length || 2,
-      hadir: teacherRecords.filter((r) => r.employmentStatus === 'PPPK_PW' || safeTeachers.find((t) => t.id === r.personId)?.employmentStatus === 'PPPK_PW').length || 2,
+      hadir: safeRecords.length === 0 ? 0 : (teacherRecords.filter((r) => r.employmentStatus === 'PPPK_PW' || safeTeachers.find((t) => t.id === r.personId)?.employmentStatus === 'PPPK_PW').length || 2),
       badge: 'PPPK Paruh Waktu',
     },
     {
       status: 'Honorer/PTT',
       total: safeTeachers.filter((t) => t.employmentStatus === 'HONORER' || t.employmentStatus === 'GTT_PTT').length || 1,
-      hadir: teacherRecords.filter((r) => r.employmentStatus === 'HONORER' || safeTeachers.find((t) => t.id === r.personId)?.employmentStatus === 'HONORER').length || 1,
+      hadir: safeRecords.length === 0 ? 0 : (teacherRecords.filter((r) => r.employmentStatus === 'HONORER' || safeTeachers.find((t) => t.id === r.personId)?.employmentStatus === 'HONORER').length || 1),
       badge: 'GTT / PTT / Tendik',
     },
   ];
@@ -642,6 +758,10 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
 
   // Student Attendance Performance for Current Month
   const monthlyStudentPerformance = useMemo(() => {
+    if (safeRecords.length === 0) {
+      return [];
+    }
+
     // Current month student records
     const monthStudentRecords = safeRecords.filter(
       (r) => r.personType === 'student' && r.date && r.date.startsWith(currentMonthStr)
@@ -695,6 +815,9 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
 
   // Top 5 Most Attended Students
   const top5AttendedStudents = useMemo(() => {
+    if (safeRecords.length === 0) {
+      return [];
+    }
     return [...monthlyStudentPerformance]
       .sort((a, b) => {
         if (b.rate !== a.rate) return b.rate - a.rate;
@@ -702,10 +825,13 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
         return a.lateDays - b.lateDays;
       })
       .slice(0, 5);
-  }, [monthlyStudentPerformance]);
+  }, [safeRecords.length, monthlyStudentPerformance]);
 
   // Need Follow-up Students (Bottom or with late/absent issues)
   const needFollowUpStudents = useMemo(() => {
+    if (safeRecords.length === 0) {
+      return [];
+    }
     const problematic = [...monthlyStudentPerformance].filter(
       (s) => s.alpaDays > 0 || s.lateDays >= 1 || s.rate < 90 || s.leaveDays >= 2
     );
@@ -998,6 +1124,30 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                 </button>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Empty State Banner when no attendance records exist */}
+      {safeRecords.length === 0 && (
+        <div id="dashboard-empty-attendance-banner" className="p-5 bg-sky-50/90 dark:bg-sky-950/30 border border-sky-200/80 dark:border-sky-800/50 rounded-3xl shadow-xs">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+            <div className="flex items-center space-x-3">
+              <div className="w-10 h-10 rounded-2xl bg-sky-100 dark:bg-sky-900/60 flex items-center justify-center text-sky-600 dark:text-sky-300 shrink-0">
+                <Clock className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="font-extrabold text-sm text-sky-950 dark:text-sky-200">
+                  Belum Pernah Melakukan Absensi (Data Masih Kosong)
+                </h4>
+                <p className="text-xs text-sky-700 dark:text-sky-300/80 mt-0.5 leading-relaxed">
+                  Sistem belum mencatat data kehadiran personil. Notifikasi keterlambatan, riwayat kehadiran, dan grafik analitik saat ini berstatus kosong.
+                </p>
+              </div>
+            </div>
+            <span className="px-3 py-1 rounded-xl bg-white dark:bg-slate-900 text-sky-700 dark:text-sky-300 text-xs font-bold border border-sky-200 dark:border-sky-800 shrink-0">
+              0 Rekaman Presensi
+            </span>
           </div>
         </div>
       )}

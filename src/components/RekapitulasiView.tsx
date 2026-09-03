@@ -27,6 +27,8 @@ import {
   Phone,
   Send,
   HardDrive,
+  Trash2,
+  Info,
 } from 'lucide-react';
 import { AttendanceRecord, SchoolClass, SchoolConfig, Student, Teacher } from '../types';
 import { formatDateIndo } from '../utils/soundAndDate';
@@ -44,9 +46,12 @@ interface RekapitulasiViewProps {
   config: SchoolConfig;
   onOpenPrintModal?: (customRecords?: AttendanceRecord[], dateLabel?: string) => void;
   onDeleteRecord?: (id: string) => void;
+  onClearAttendance?: () => void;
+  onNavigateToScan?: () => void;
   todayDate?: string;
   students?: Student[];
   teachers?: Teacher[];
+  userRole?: string;
 }
 
 export const RekapitulasiView: React.FC<RekapitulasiViewProps> = ({
@@ -54,8 +59,12 @@ export const RekapitulasiView: React.FC<RekapitulasiViewProps> = ({
   classes = [],
   config,
   onOpenPrintModal,
+  onDeleteRecord,
+  onClearAttendance,
+  onNavigateToScan,
   students = [],
   teachers = [],
+  userRole = 'admin',
 }) => {
   const safeRecords = records || [];
   const safeClasses = classes || [];
@@ -661,8 +670,53 @@ export const RekapitulasiView: React.FC<RekapitulasiViewProps> = ({
             <HardDrive className="w-4 h-4 text-purple-600" />
             <span>Media BKD</span>
           </button>
+
+          {/* Clear Attendance to Empty State Button */}
+          {onClearAttendance && (
+            <button
+              id="clear-all-attendance-btn"
+              onClick={() => {
+                if (confirm('Kosongkan seluruh data presensi, riwayat, dan notifikasi? Status akan disetel ke: "Belum Pernah Melakukan Absensi".')) {
+                  onClearAttendance();
+                }
+              }}
+              className="px-3.5 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-2xl text-xs font-bold flex items-center space-x-1.5 transition-all cursor-pointer"
+              title="Setel status ke Belum Pernah Melakukan Absensi (Kosongkan riwayat & notifikasi)"
+            >
+              <Trash2 className="w-4 h-4 text-rose-600" />
+              <span>{safeRecords.length === 0 ? 'Data Presensi Kosong' : 'Kosongkan Presensi'}</span>
+            </button>
+          )}
         </div>
       </div>
+
+      {/* Empty State Top Alert Banner if no attendance has ever been recorded */}
+      {safeRecords.length === 0 && (
+        <div id="rekap-empty-attendance-banner" className="p-4 sm:p-5 bg-sky-50 border border-sky-200 rounded-3xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
+          <div className="flex items-center space-x-3">
+            <div className="w-10 h-10 rounded-2xl bg-sky-100 text-sky-700 flex items-center justify-center shrink-0">
+              <Clock className="w-5 h-5" />
+            </div>
+            <div>
+              <h4 className="font-extrabold text-sm text-sky-950">
+                Belum Pernah Melakukan Absensi (Data Masih Kosong)
+              </h4>
+              <p className="text-xs text-sky-700 mt-0.5">
+                Data presensi, rekapitulasi, notifikasi kehadiran, dan riwayat/histori saat ini masih kosong. Silakan lakukan presensi pertama melalui menu Scan QR Presensi atau Absensi Selfie.
+              </p>
+            </div>
+          </div>
+          {onNavigateToScan && (
+            <button
+              onClick={onNavigateToScan}
+              className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl text-xs font-bold flex items-center space-x-1.5 transition-all shadow-xs shrink-0 cursor-pointer"
+            >
+              <QrCode className="w-4 h-4" />
+              <span>Scan QR Presensi</span>
+            </button>
+          )}
+        </div>
+      )}
 
       {/* WA Notification Feedback Banner */}
       {waNotifMsg && (
@@ -1003,12 +1057,54 @@ export const RekapitulasiView: React.FC<RekapitulasiViewProps> = ({
         </div>
 
         {displayRecords.length === 0 && (
-          <div className="p-12 text-center text-slate-400">
-            <FileSpreadsheet className="w-10 h-10 mx-auto mb-3 text-slate-300" />
-            <p className="text-sm font-bold text-slate-700">Tidak ada rekaman presensi yang cocok</p>
-            <p className="text-xs text-slate-400 mt-1">
-              Coba sesuaikan filter rentang tanggal, sesi, atau kategori personil.
-            </p>
+          <div className="p-12 text-center">
+            {safeRecords.length === 0 ? (
+              <div className="max-w-md mx-auto">
+                <div className="w-16 h-16 rounded-3xl bg-sky-50 border border-sky-200 flex items-center justify-center mx-auto mb-4 text-sky-600 shadow-sm">
+                  <Clock className="w-8 h-8" />
+                </div>
+                <h4 className="text-base font-extrabold text-slate-900">
+                  Belum Pernah Melakukan Absensi
+                </h4>
+                <p className="text-xs text-slate-500 mt-1.5 leading-relaxed">
+                  Data presensi, rekapitulasi, notifikasi kehadiran, dan riwayat/histori saat ini masih kosong. Silakan lakukan presensi pertama melalui menu Scan QR Presensi atau Absensi Selfie.
+                </p>
+                <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+                  <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-600">
+                    Status: 0 Data Tersimpan
+                  </span>
+                  {onNavigateToScan && (
+                    <button
+                      onClick={onNavigateToScan}
+                      className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer"
+                    >
+                      <QrCode className="w-3.5 h-3.5" />
+                      <span>Buka Scan Presensi</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="max-w-md mx-auto text-slate-400">
+                <FileSpreadsheet className="w-10 h-10 mx-auto mb-3 text-slate-300" />
+                <p className="text-sm font-bold text-slate-700">Tidak ada rekaman presensi yang cocok</p>
+                <p className="text-xs text-slate-400 mt-1">
+                  Coba sesuaikan filter rentang tanggal, sesi, atau kategori personil.
+                </p>
+                <button
+                  onClick={() => {
+                    setSearchQuery('');
+                    setDateFilterMode('all');
+                    setSelectedStatus('ALL');
+                    setSelectedSessionType('ALL');
+                    setSelectedPersonType('ALL');
+                  }}
+                  className="mt-3 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold cursor-pointer"
+                >
+                  Reset Filter
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>

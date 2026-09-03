@@ -169,7 +169,7 @@ export const GoogleWorkspaceTab: React.FC<GoogleWorkspaceTabProps> = ({
     setLoading(true);
     const textReport = `LAPORAN RESMI PRESENSI DIGITAL & SIMPEG
 Instansi: ${config.schoolName}
-NPSN: ${config.schoolNpsn}
+NPSN: ${config.npsn}
 Tanggal: ${formatDateIndo(new Date().toISOString().split('T')[0])}
 
 SUMMARY DATA:
@@ -209,7 +209,7 @@ Dicetak secara otomatis via Google AI Studio Build.`;
       'Evaluasi bulanan rekapitulasi kehadiran ASN, PPPK, dan peserta didik',
       today,
       today,
-      config.schoolAddress
+      config.address
     );
     setSyncStatus(result);
     setLoading(false);

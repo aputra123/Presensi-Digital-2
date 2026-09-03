@@ -19,12 +19,15 @@ import {
   Building2,
   ShieldCheck,
   FileCheck2,
+  Trash2,
+  Info,
 } from 'lucide-react';
 import { ActiveTab, LeaveRequest, SchoolConfig, ToastNotification, UserRole } from '../types';
 
 interface NotificationBannerProps {
   notifications?: ToastNotification[];
   onDismissToast?: (id: string) => void;
+  onClearAllNotifications?: () => void;
   onReviewLeave?: (leaveId?: string) => void;
   onTriggerSimulation?: () => void;
   onOpenBackupPrompt?: () => void;
@@ -44,6 +47,7 @@ interface NotificationBannerProps {
 export const NotificationBanner: React.FC<NotificationBannerProps> = ({
   notifications = [],
   onDismissToast = (_id?: string) => {},
+  onClearAllNotifications,
   onReviewLeave = (_leaveId?: string) => {},
   onTriggerSimulation = () => {},
   onOpenBackupPrompt,
@@ -61,6 +65,7 @@ export const NotificationBanner: React.FC<NotificationBannerProps> = ({
 }) => {
   const [currentTime, setCurrentTime] = useState<string>('');
   const [currentDateStr, setCurrentDateStr] = useState<string>('');
+  const [isNotifDropdownOpen, setIsNotifDropdownOpen] = useState<boolean>(false);
 
   useEffect(() => {
     const updateTime = () => {
@@ -226,6 +231,108 @@ export const NotificationBanner: React.FC<NotificationBannerProps> = ({
               <span>Backup Harian</span>
             </button>
           )}
+
+          {/* Notification Center Trigger Bell */}
+          <div className="relative">
+            <button
+              id="header-notification-center-btn"
+              onClick={() => setIsNotifDropdownOpen((prev) => !prev)}
+              className={`relative p-2 rounded-xl border transition-all cursor-pointer shadow-2xs flex items-center justify-center ${
+                notifications.length > 0
+                  ? 'bg-amber-50 hover:bg-amber-100 text-amber-700 border-amber-200'
+                  : 'bg-slate-50 hover:bg-slate-100 text-slate-600 border-slate-200/80'
+              }`}
+              title="Pusat Notifikasi Presensi & Izin"
+            >
+              <Bell className="w-4 h-4" />
+              {notifications.length > 0 ? (
+                <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-rose-600 text-white text-[10px] font-bold flex items-center justify-center animate-pulse">
+                  {notifications.length}
+                </span>
+              ) : (
+                <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-slate-300" />
+              )}
+            </button>
+
+            {/* Notification Dropdown Popover */}
+            {isNotifDropdownOpen && (
+              <div className="absolute right-0 mt-2 w-80 sm:w-96 bg-white rounded-2xl shadow-2xl border border-slate-200 z-50 overflow-hidden animate-fadeIn">
+                <div className="p-3.5 bg-slate-900 text-white flex items-center justify-between">
+                  <div className="flex items-center space-x-2">
+                    <Bell className="w-4 h-4 text-amber-400" />
+                    <h4 className="text-xs font-bold tracking-wide uppercase">
+                      Pusat Notifikasi ({notifications.length})
+                    </h4>
+                  </div>
+                  <div className="flex items-center space-x-1">
+                    {notifications.length > 0 && onClearAllNotifications && (
+                      <button
+                        onClick={() => {
+                          onClearAllNotifications();
+                        }}
+                        className="px-2 py-1 bg-slate-800 hover:bg-rose-900/60 text-slate-300 hover:text-rose-200 rounded-lg text-[10px] font-bold flex items-center space-x-1 transition-colors"
+                        title="Kosongkan semua notifikasi"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                        <span>Bersihkan</span>
+                      </button>
+                    )}
+                    <button
+                      onClick={() => setIsNotifDropdownOpen(false)}
+                      className="text-slate-400 hover:text-white p-1 rounded-lg"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="max-h-80 overflow-y-auto divide-y divide-slate-100">
+                  {notifications.length === 0 ? (
+                    <div className="p-8 text-center">
+                      <Info className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                      <p className="text-xs font-bold text-slate-700">
+                        Belum Pernah Melakukan Absensi / Tidak Ada Notifikasi
+                      </p>
+                      <p className="text-[11px] text-slate-400 mt-1 max-w-xs mx-auto leading-relaxed">
+                        Data notifikasi saat ini kosong. Notifikasi kehadiran atau permohonan izin akan muncul secara otomatis ketika presensi dilakukan.
+                      </p>
+                    </div>
+                  ) : (
+                    notifications.map((toast) => (
+                      <div key={toast.id} className="p-3 hover:bg-slate-50 transition-colors space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-slate-900">{toast.title}</span>
+                          <span className="text-[10px] text-slate-400 font-mono">{toast.timestamp}</span>
+                        </div>
+                        <p className="text-xs text-slate-600 leading-snug">{toast.message}</p>
+                        <div className="flex items-center justify-between pt-1">
+                          {toast.leaveId && (
+                            <button
+                              onClick={() => {
+                                onReviewLeave(toast.leaveId);
+                                onDismissToast(toast.id);
+                                setIsNotifDropdownOpen(false);
+                              }}
+                              className="text-xs font-bold text-indigo-600 hover:text-indigo-800 flex items-center space-x-1"
+                            >
+                              <span>Tinjau Izin</span>
+                              <ArrowRight className="w-3 h-3" />
+                            </button>
+                          )}
+                          <button
+                            onClick={() => onDismissToast(toast.id)}
+                            className="text-[11px] text-slate-400 hover:text-slate-700 ml-auto"
+                          >
+                            Hapus
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
 
           {/* Simulate Notification Button */}
           <button

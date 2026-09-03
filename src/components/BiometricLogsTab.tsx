@@ -34,6 +34,8 @@ import {
   Radio,
   Users,
   Copy,
+  Calendar,
+  CalendarDays,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -116,6 +118,33 @@ export const BiometricLogsTab: React.FC<BiometricLogsTabProps> = ({
   const [isSimulating, setIsSimulating] = useState(false);
   const [selectedSuspiciousGroupId, setSelectedSuspiciousGroupId] = useState<string | null>(null);
   const [showIncidentModal, setShowIncidentModal] = useState(false);
+
+  const [startDate, setStartDate] = useState<string>('');
+  const [endDate, setEndDate] = useState<string>('');
+  const [datePreset, setDatePreset] = useState<'all' | 'today' | 'last7' | 'last30' | 'custom'>('all');
+
+  const handleSetDatePreset = (preset: 'all' | 'today' | 'last7' | 'last30') => {
+    setDatePreset(preset);
+    const now = new Date();
+    if (preset === 'all') {
+      setStartDate('');
+      setEndDate('');
+    } else if (preset === 'today') {
+      const today = getTodayDateString(now);
+      setStartDate(today);
+      setEndDate(today);
+    } else if (preset === 'last7') {
+      const d = new Date();
+      d.setDate(d.getDate() - 6);
+      setStartDate(getTodayDateString(d));
+      setEndDate(getTodayDateString(now));
+    } else if (preset === 'last30') {
+      const d = new Date();
+      d.setDate(d.getDate() - 29);
+      setStartDate(getTodayDateString(d));
+      setEndDate(getTodayDateString(now));
+    }
+  };
 
   const todayStr = getTodayDateString();
 
@@ -404,9 +433,14 @@ export const BiometricLogsTab: React.FC<BiometricLogsTabProps> = ({
         matchGroup = log.suspiciousGroupId === selectedSuspiciousGroupId;
       }
 
-      return matchSearch && matchStatus && matchSeverity && matchType && matchHour && matchGroup;
+      // Date Range Match
+      const matchDate =
+        (!startDate || log.date >= startDate) &&
+        (!endDate || log.date <= endDate);
+
+      return matchDate && matchSearch && matchStatus && matchSeverity && matchType && matchHour && matchGroup;
     });
-  }, [normalizedLogs, searchTerm, statusFilter, severityFilter, personTypeFilter, selectedTimelineHour, selectedSuspiciousGroupId]);
+  }, [normalizedLogs, startDate, endDate, searchTerm, statusFilter, severityFilter, personTypeFilter, selectedTimelineHour, selectedSuspiciousGroupId]);
 
   // Hover Card Quick User Profile Stats
   const hoveredUserStats = useMemo(() => {
@@ -530,7 +564,7 @@ export const BiometricLogsTab: React.FC<BiometricLogsTabProps> = ({
     }
   };
 
-  // Export to standard CSV
+  // Export to standard CSV with GPS & Liveness forensic metadata
   const handleExportCSV = () => {
     const headers = [
       'ID Log',
@@ -544,15 +578,22 @@ export const BiometricLogsTab: React.FC<BiometricLogsTabProps> = ({
       'Status Verifikasi',
       'Indikasi Mass-Spoofing',
       'Skor Kemiripan (%)',
-      'Ambang Batas (%)',
-      'Uji Liveness',
-      'GPS Geofence',
-      'Jarak GPS (Meter)',
-      'Kamera',
+      'Ambang Batas Liveness / Match Threshold (%)',
+      'Hasil Uji Liveness Sensor',
+      'Status GPS Geofence',
+      'Jarak GPS Aktual (Meter)',
+      'Latitude GPS Upaya',
+      'Longitude GPS Upaya',
+      'Koordinat Pusat Sekolah Target',
+      'Batas Radius Geofence (Meter)',
+      'Arah Kamera',
       'Perangkat / IP',
       'Alasan Kegagalan / Keterangan',
-      'Catatan Anomali',
+      'Catatan Forensik / Anomali',
     ];
+
+    const schoolTargetCoord = config ? `"${config.schoolLat}, ${config.schoolLng}"` : '"-1.8485, 124.4682"';
+    const schoolMaxRadius = config?.maxRadiusMeters || 80;
 
     const rows = filteredLogs.map((l) => [
       l.id,
@@ -564,12 +605,16 @@ export const BiometricLogsTab: React.FC<BiometricLogsTabProps> = ({
       l.personType === 'teacher' ? 'Guru/GTK' : 'Siswa',
       `"${(l.classOrSubject || '').replace(/"/g, '""')}"`,
       l.status.toUpperCase(),
-      l.isSuspicious ? 'YA' : 'TIDAK',
+      l.isSuspicious ? 'YA (SPOOF)' : 'TIDAK',
       l.matchScore,
-      l.threshold,
-      l.livenessPassed ? 'Lolos' : 'Gagal',
-      l.gpsPassed ? 'Valid' : 'Luar Radius',
+      l.threshold || 80,
+      l.livenessPassed ? 'Lolos (Liveness Valid)' : 'Gagal (Liveness Tidak Terpenuhi)',
+      l.gpsPassed ? 'Dalam Radius' : 'Luar Radius',
       l.distanceMeter,
+      l.latitude !== undefined ? l.latitude : '-',
+      l.longitude !== undefined ? l.longitude : '-',
+      schoolTargetCoord,
+      schoolMaxRadius,
       l.cameraFacing === 'user' ? 'Kamera Depan' : 'Kamera Belakang',
       `"${(l.ipOrDevice || '-').replace(/"/g, '""')}"`,
       `"${(l.failureReason || 'Verifikasi Biometrik Valid').replace(/"/g, '""')}"`,
@@ -577,7 +622,7 @@ export const BiometricLogsTab: React.FC<BiometricLogsTabProps> = ({
     ]);
 
     const csvBody = [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
-    downloadCsv(`Biometric_Logs_SMPN4_Taliabu_${todayStr}`, csvBody);
+    downloadCsv(`Biometric_Logs_Forensik_SMPN4_Taliabu_${startDate ? startDate + '_sd_' + (endDate || todayStr) : todayStr}`, csvBody);
   };
 
   // Specialized Incident Report Export (PDF & CSV)
@@ -1138,8 +1183,115 @@ export const BiometricLogsTab: React.FC<BiometricLogsTabProps> = ({
         </div>
       </div>
 
-      {/* Search and Filters Bar */}
-      <div className="p-4 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-3">
+      {/* Search, Date Range Picker & Filters Bar */}
+      <div className="p-4 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-3.5">
+        {/* Date Range Picker & Quick Presets Header */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-3 border-b border-slate-100 dark:border-slate-800/80">
+          <div className="flex items-center space-x-2">
+            <div className="w-8 h-8 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center">
+              <CalendarDays className="w-4 h-4" />
+            </div>
+            <div>
+              <span className="text-xs font-extrabold text-slate-900 dark:text-white block">
+                Rentang Waktu & Periode Forensik
+              </span>
+              <span className="text-[10px] text-slate-400">
+                Filter rekaman biometrik berdasarkan rentang tanggal
+              </span>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Quick Date Presets */}
+            <div className="flex items-center space-x-1 p-1 bg-slate-100 dark:bg-slate-800/80 rounded-xl text-xs font-bold">
+              <button
+                type="button"
+                onClick={() => handleSetDatePreset('all')}
+                className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
+                  datePreset === 'all' && !startDate && !endDate
+                    ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+                }`}
+              >
+                Semua
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSetDatePreset('today')}
+                className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
+                  datePreset === 'today'
+                    ? 'bg-indigo-600 text-white shadow-xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+                }`}
+              >
+                Hari Ini
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSetDatePreset('last7')}
+                className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
+                  datePreset === 'last7'
+                    ? 'bg-indigo-600 text-white shadow-xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+                }`}
+              >
+                7 Hari
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSetDatePreset('last30')}
+                className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
+                  datePreset === 'last30'
+                    ? 'bg-indigo-600 text-white shadow-xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+                }`}
+              >
+                30 Hari
+              </button>
+            </div>
+
+            {/* Date Pickers */}
+            <div className="flex items-center space-x-1.5 text-xs">
+              <div className="flex items-center space-x-1 px-2.5 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl">
+                <span className="text-[10px] text-slate-400 font-bold">Dari:</span>
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => {
+                    setStartDate(e.target.value);
+                    setDatePreset('custom');
+                  }}
+                  className="bg-transparent text-slate-800 dark:text-slate-200 font-mono text-[11px] font-bold focus:outline-hidden"
+                />
+              </div>
+
+              <div className="flex items-center space-x-1 px-2.5 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl">
+                <span className="text-[10px] text-slate-400 font-bold">Sampai:</span>
+                <input
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => {
+                    setEndDate(e.target.value);
+                    setDatePreset('custom');
+                  }}
+                  className="bg-transparent text-slate-800 dark:text-slate-200 font-mono text-[11px] font-bold focus:outline-hidden"
+                />
+              </div>
+
+              {(startDate || endDate) && (
+                <button
+                  type="button"
+                  onClick={() => handleSetDatePreset('all')}
+                  className="p-1.5 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 bg-slate-100 dark:bg-slate-800 rounded-xl cursor-pointer"
+                  title="Reset Filter Tanggal"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
           {/* Search Box */}
           <div className="relative flex-1">
@@ -1181,7 +1333,7 @@ export const BiometricLogsTab: React.FC<BiometricLogsTabProps> = ({
                     : 'text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/50'
                 }`}
               >
-                ✓ Lolos
+                ✓ Sukses (Lolos)
               </button>
               <button
                 onClick={() => {
@@ -1194,7 +1346,7 @@ export const BiometricLogsTab: React.FC<BiometricLogsTabProps> = ({
                     : 'text-rose-700 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/50'
                 }`}
               >
-                ✕ Gagal
+                ✕ Gagal (Anomali)
               </button>
               <button
                 onClick={() => {
@@ -1250,9 +1402,24 @@ export const BiometricLogsTab: React.FC<BiometricLogsTabProps> = ({
         </div>
 
         {/* Active Filter Indicators */}
-        {(selectedTimelineHour !== null || selectedSuspiciousGroupId !== null) && (
-          <div className="flex items-center space-x-2 pt-2 border-t border-slate-100 dark:border-slate-800 text-xs">
+        {(selectedTimelineHour !== null || selectedSuspiciousGroupId !== null || startDate || endDate) && (
+          <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100 dark:border-slate-800 text-xs">
             <span className="font-bold text-slate-500">Filter Aktif:</span>
+            {(startDate || endDate) && (
+              <span className="px-2.5 py-1 bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 rounded-xl font-bold flex items-center space-x-1">
+                <Calendar className="w-3 h-3" />
+                <span>
+                  {startDate ? formatDateIndo(startDate) : 'Awal'} s/d {endDate ? formatDateIndo(endDate) : 'Sekarang'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleSetDatePreset('all')}
+                  className="text-indigo-600 hover:text-indigo-900 ml-1"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            )}
             {selectedTimelineHour !== null && (
               <span className="px-2.5 py-1 bg-indigo-100 dark:bg-indigo-950 text-indigo-800 dark:text-indigo-300 rounded-xl font-bold flex items-center space-x-1">
                 <span>Jam: {String(selectedTimelineHour).padStart(2, '0')}:00 WITA</span>
@@ -1328,7 +1495,7 @@ export const BiometricLogsTab: React.FC<BiometricLogsTabProps> = ({
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-medium">
                 {filteredLogs.map((log) => {
-                  const isFailed = log.status === 'failed' || log.severity === 'error';
+                  const isFailed = log.status === 'failed' || log.severity === 'error' || !log.livenessPassed || !log.gpsPassed;
                   const isSuspicious = log.isSuspicious === true;
                   const isSelected = selectedIds.includes(log.id);
 
@@ -1336,11 +1503,11 @@ export const BiometricLogsTab: React.FC<BiometricLogsTabProps> = ({
                     <tr
                       key={log.id}
                       onClick={() => setSelectedLog(log)}
-                      className={`cursor-pointer transition-colors ${
+                      className={`cursor-pointer transition-all duration-300 ${
                         isSuspicious
-                          ? 'bg-purple-50/70 hover:bg-purple-100/70 dark:bg-purple-950/30 dark:hover:bg-purple-950/50 border-l-4 border-l-purple-600'
+                          ? 'bg-purple-50/90 hover:bg-purple-100 dark:bg-purple-950/40 dark:hover:bg-purple-950/60 border-l-4 border-l-purple-600 ring-1 ring-purple-400/40'
                           : isFailed
-                          ? 'bg-rose-50/70 hover:bg-rose-100/70 dark:bg-rose-950/20 dark:hover:bg-rose-950/40 border-l-4 border-l-rose-500'
+                          ? 'bg-rose-50/90 hover:bg-rose-100 dark:bg-rose-950/30 dark:hover:bg-rose-950/50 border-l-4 border-l-rose-600 ring-1 ring-rose-400/50 shadow-xs animate-[pulse_3s_ease-in-out_infinite]'
                           : 'hover:bg-slate-50/80 dark:hover:bg-slate-800/40'
                       } ${isSelected ? 'bg-indigo-50/80 dark:bg-indigo-950/30' : ''}`}
                     >
@@ -1368,9 +1535,10 @@ export const BiometricLogsTab: React.FC<BiometricLogsTabProps> = ({
                               🚨 Suspicious Spoof
                             </span>
                           )}
-                          {log.severity === 'error' ? (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-black uppercase bg-rose-100 dark:bg-rose-900/60 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-700">
-                              🔴 Error
+                          {isFailed ? (
+                            <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md text-[10px] font-black uppercase bg-rose-100 dark:bg-rose-900/70 text-rose-700 dark:text-rose-200 border border-rose-300 dark:border-rose-700 animate-pulse">
+                              <span className="w-1.5 h-1.5 rounded-full bg-rose-600 animate-ping"></span>
+                              <span>🔴 Error / Anomali</span>
                             </span>
                           ) : log.severity === 'warning' ? (
                             <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-black uppercase bg-amber-100 dark:bg-amber-900/60 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-700">
@@ -1398,15 +1566,24 @@ export const BiometricLogsTab: React.FC<BiometricLogsTabProps> = ({
                         }}
                       >
                         <div className="flex items-center space-x-3">
-                          <img
-                            src={
-                              log.photoThumbnail ||
-                              'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=100&q=80'
-                            }
-                            alt={log.personName}
-                            referrerPolicy="no-referrer"
-                            className="w-9 h-9 rounded-xl object-cover border border-slate-200 dark:border-slate-700 shrink-0"
-                          />
+                          <div className="relative shrink-0">
+                            <img
+                              src={
+                                log.photoThumbnail ||
+                                'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=100&q=80'
+                              }
+                              alt={log.personName}
+                              referrerPolicy="no-referrer"
+                              className={`w-9 h-9 rounded-xl object-cover border shrink-0 ${
+                                isFailed
+                                  ? 'border-rose-400 ring-2 ring-rose-400/50'
+                                  : 'border-slate-200 dark:border-slate-700'
+                              }`}
+                            />
+                            {isFailed && (
+                              <span className="absolute -top-1 -right-1 w-3 h-3 bg-rose-500 rounded-full border-2 border-white dark:border-slate-900 animate-ping"></span>
+                            )}
+                          </div>
                           <div className="min-w-0">
                             <div className="font-extrabold text-slate-900 dark:text-white truncate hover:underline hover:text-indigo-600">
                               {log.personName}
@@ -1841,6 +2018,12 @@ export const BiometricLogsTab: React.FC<BiometricLogsTabProps> = ({
                     attemptName={selectedLog.personName}
                     distanceMeters={selectedLog.distanceMeter}
                     isPassed={selectedLog.gpsPassed}
+                    status={selectedLog.status}
+                    severity={selectedLog.severity}
+                    isSuspicious={selectedLog.isSuspicious}
+                    failureReason={selectedLog.failureReason || selectedLog.suspiciousReason}
+                    matchScore={selectedLog.matchScore}
+                    threshold={selectedLog.threshold || 80}
                   />
                   <p className="text-[10px] text-slate-400 text-center">
                     Titik Sekolah: Desa Pancoran ({config.schoolLat}, {config.schoolLng})

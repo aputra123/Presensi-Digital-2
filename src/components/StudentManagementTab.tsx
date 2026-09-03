@@ -411,9 +411,10 @@ export const StudentManagementTab: React.FC<StudentManagementTabProps> = ({
               setIsQrModalOpen(true);
             }}
             className="px-3.5 py-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800 rounded-2xl text-xs font-bold flex items-center space-x-1.5 transition-colors cursor-pointer"
+            title="Buka generator QR Code presensi dan kartu kontak VCard (.vcf) siswa"
           >
             <QrCode className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-            <span>Generator QR Siswa</span>
+            <span>Generator QR & VCard</span>
           </button>
 
           <button
@@ -687,7 +688,7 @@ export const StudentManagementTab: React.FC<StudentManagementTabProps> = ({
                             setIsQrModalOpen(true);
                           }}
                           className="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 dark:hover:bg-slate-800 transition-colors"
-                          title="Lihat QR Code Siswa"
+                          title="Lihat / Unduh QR Code & VCard Siswa"
                         >
                           <QrCode className="w-4 h-4" />
                         </button>

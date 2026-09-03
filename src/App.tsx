@@ -782,6 +782,22 @@ export default function App() {
     setRecords((prev) => prev.filter((r) => r.id !== id));
   };
 
+  const handleClearAllAttendance = () => {
+    setRecords([]);
+    setNotifications([]);
+    setBiometricLogs([]);
+    setActivityLogs((prev) => prev.filter((l) => l.category !== 'attendance'));
+    try {
+      localStorage.setItem('school_presensi_records', JSON.stringify([]));
+      localStorage.setItem('school_presensi_notifs', JSON.stringify([]));
+      localStorage.setItem('school_presensi_biometric_logs', JSON.stringify([]));
+      const remainingLogs = activityLogs.filter((l) => l.category !== 'attendance');
+      localStorage.setItem('school_presensi_activity_logs', JSON.stringify(remainingLogs));
+    } catch (e) {
+      console.error('Error resetting attendance data:', e);
+    }
+  };
+
   // Handlers for Student & Teacher Leaves
   const handleAddLeaveRequest = (newLeave: LeaveRequest) => {
     setLeaves((prev) => [newLeave, ...prev]);
@@ -923,9 +939,9 @@ export default function App() {
     // Cascade delete related attendance, leaves, biometric logs, and audit logs
     if (student) {
       setRecords((prev) => prev.filter((r) => r.personId !== id && r.identifier !== student.nisn));
-      setLeaves((prev) => prev.filter((l) => l.personId !== id && l.nisnOrNip !== student.nisn));
+      setLeaves((prev) => prev.filter((l) => l.personId !== id));
       setBiometricLogs((prev) => prev.filter((b) => b.personId !== id && b.identifier !== student.nisn));
-      setActivityLogs((prev) => prev.filter((a) => a.entityId !== id));
+      setActivityLogs((prev) => prev.filter((a) => a.targetId !== id));
     }
   };
 
@@ -952,11 +968,11 @@ export default function App() {
     // Cascade delete related attendance, leaves, GTK services, duty assignments, biometric logs, and audit logs
     if (teacher) {
       setRecords((prev) => prev.filter((r) => r.personId !== id && r.identifier !== teacher.nip));
-      setLeaves((prev) => prev.filter((l) => l.personId !== id && l.nisnOrNip !== teacher.nip));
+      setLeaves((prev) => prev.filter((l) => l.personId !== id));
       setGtkServices((prev) => prev.filter((g) => g.teacherId !== id && g.nip !== teacher.nip));
       setDutyRoster((prev) => prev.filter((d) => d.teacherId !== id && d.nip !== teacher.nip));
       setBiometricLogs((prev) => prev.filter((b) => b.personId !== id && b.identifier !== teacher.nip));
-      setActivityLogs((prev) => prev.filter((a) => a.entityId !== id));
+      setActivityLogs((prev) => prev.filter((a) => a.targetId !== id));
     }
   };
 
@@ -1172,6 +1188,12 @@ export default function App() {
         <NotificationBanner
           notifications={notifications}
           onDismissToast={handleDismissNotification}
+          onClearAllNotifications={() => {
+            setNotifications([]);
+            try {
+              localStorage.setItem('school_presensi_notifs', JSON.stringify([]));
+            } catch {}
+          }}
           onReviewLeave={handleReviewLeave}
           onTriggerSimulation={handleTriggerSimulation}
           onOpenBackupPrompt={() => setIsDailyBackupModalOpen(true)}
@@ -1303,6 +1325,9 @@ export default function App() {
               config={config}
               todayDate={todayDate}
               onDeleteRecord={handleDeleteRecord}
+              onClearAttendance={handleClearAllAttendance}
+              onNavigateToScan={() => setActiveTab('scan')}
+              userRole={userRole}
               onOpenPrintModal={(customRecs, dateLabel) =>
                 setPrintModalState({
                   isOpen: true,
@@ -1369,6 +1394,7 @@ export default function App() {
               leaves={leaves}
               students={students}
               teachers={teachers}
+              config={config}
               todayDate={todayDate}
               onAddLeaveRequest={handleAddLeaveRequest}
               onUpdateLeaveStatus={handleUpdateLeaveStatus}

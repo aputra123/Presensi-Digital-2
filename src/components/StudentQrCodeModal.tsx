@@ -19,6 +19,8 @@ import {
   Eye,
   Layers,
   School,
+  FileText,
+  Zap,
 } from 'lucide-react';
 import { Student, SchoolConfig } from '../types';
 
@@ -43,7 +45,7 @@ export const StudentQrCodeModal: React.FC<StudentQrCodeModalProps> = ({
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const [isCopied, setIsCopied] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [qrPayloadType, setQrPayloadType] = useState<'nisn' | 'std_code' | 'json'>('nisn');
+  const [qrPayloadType, setQrPayloadType] = useState<'vcard' | 'unique_id' | 'nisn' | 'std_code' | 'json'>('vcard');
   const [qrColor, setQrColor] = useState<string>('#0f172a');
   const [activeTab, setActiveTab] = useState<'single' | 'batch'>('single');
   const [batchClassFilter, setBatchClassFilter] = useState<string>('ALL');
@@ -58,12 +60,32 @@ export const StudentQrCodeModal: React.FC<StudentQrCodeModalProps> = ({
     }
   }, [selectedStudent, students]);
 
+  // Generate standard VCard 3.0 string for current student
+  const generateVCardString = (student: Student): string => {
+    return [
+      'BEGIN:VCARD',
+      'VERSION:3.0',
+      `FN:${student.name}`,
+      `ORG:${config.schoolName}`,
+      `TITLE:Peserta Didik - ${student.className}`,
+      student.parentPhone ? `TEL;TYPE=CELL,VOICE:${student.parentPhone}` : '',
+      student.email ? `EMAIL;TYPE=INTERNET:${student.email}` : '',
+      `NOTE:NISN: ${student.nisn} | Kelas: ${student.className} | UID: ${student.id} | Sekolah: ${config.schoolName}`,
+      `UID:STUDENT-${student.id}-${student.nisn}`,
+      'END:VCARD',
+    ].filter(Boolean).join('\r\n');
+  };
+
   // Generate QR Code data URL when student or payload type changes
   useEffect(() => {
     if (!currentStudent) return;
 
     let payload = currentStudent.nisn;
-    if (qrPayloadType === 'std_code') {
+    if (qrPayloadType === 'vcard') {
+      payload = generateVCardString(currentStudent);
+    } else if (qrPayloadType === 'unique_id') {
+      payload = `UID-STD-${currentStudent.id}-${currentStudent.nisn}`;
+    } else if (qrPayloadType === 'std_code') {
       payload = `STD-${currentStudent.nisn}`;
     } else if (qrPayloadType === 'json') {
       payload = JSON.stringify({
@@ -82,7 +104,7 @@ export const StudentQrCodeModal: React.FC<StudentQrCodeModalProps> = ({
         dark: qrColor,
         light: '#ffffff',
       },
-      errorCorrectionLevel: 'H',
+      errorCorrectionLevel: 'M',
     })
       .then((url) => {
         setQrDataUrl(url);
@@ -112,20 +134,53 @@ export const StudentQrCodeModal: React.FC<StudentQrCodeModalProps> = ({
     }
   };
 
-  const handleCopyNisn = () => {
-    navigator.clipboard.writeText(currentStudent.nisn);
+  const getCurrentPayloadString = (): string => {
+    if (!currentStudent) return '';
+    if (qrPayloadType === 'vcard') return generateVCardString(currentStudent);
+    if (qrPayloadType === 'unique_id') return `UID-STD-${currentStudent.id}-${currentStudent.nisn}`;
+    if (qrPayloadType === 'std_code') return `STD-${currentStudent.nisn}`;
+    if (qrPayloadType === 'json') {
+      return JSON.stringify({
+        id: currentStudent.id,
+        nisn: currentStudent.nisn,
+        name: currentStudent.name,
+        class: currentStudent.className,
+        school: config.schoolName,
+      }, null, 2);
+    }
+    return currentStudent.nisn;
+  };
+
+  const handleCopyPayload = () => {
+    navigator.clipboard.writeText(getCurrentPayloadString());
     setIsCopied(true);
     setTimeout(() => setIsCopied(false), 2000);
   };
 
   const handleDownloadPng = () => {
-    if (!qrDataUrl) return;
+    if (!qrDataUrl || !currentStudent) return;
     const a = document.createElement('a');
     a.href = qrDataUrl;
-    a.download = `QR_Presensi_${currentStudent.name.replace(/\s+/g, '_')}_${currentStudent.nisn}.png`;
+    const cleanName = currentStudent.name.replace(/\s+/g, '_');
+    a.download = `QR_${qrPayloadType.toUpperCase()}_${cleanName}_${currentStudent.nisn}.png`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
+  };
+
+  const handleDownloadVCard = () => {
+    if (!currentStudent) return;
+    const vcardContent = generateVCardString(currentStudent);
+    const blob = new Blob([vcardContent], { type: 'text/vcard;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const cleanName = currentStudent.name.replace(/\s+/g, '_');
+    a.download = `VCard_${cleanName}_${currentStudent.nisn}.vcf`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   const handlePrintCard = () => {
@@ -334,17 +389,60 @@ export const StudentQrCodeModal: React.FC<StudentQrCodeModalProps> = ({
 
                 {/* QR Code Payload & Format Options */}
                 <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/80 space-y-3">
-                  <h4 className="text-xs font-extrabold text-slate-900 dark:text-white flex items-center space-x-1.5">
-                    <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
-                    <span>Konfigurasi Format QR Presensi</span>
-                  </h4>
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-extrabold text-slate-900 dark:text-white flex items-center space-x-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
+                      <span>Format QR Code & VCard Siswa</span>
+                    </h4>
+                    <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-bold">
+                      {qrPayloadType === 'vcard' && 'Format Kontak Elektronik (vCard 3.0)'}
+                      {qrPayloadType === 'unique_id' && 'Format ID Unik Scan Cepat'}
+                      {qrPayloadType === 'nisn' && 'Hanya Angka NISN'}
+                      {qrPayloadType === 'std_code' && 'Prefix Kode Standar'}
+                      {qrPayloadType === 'json' && 'Struktur Data JSON'}
+                    </span>
+                  </div>
 
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    <button
+                      onClick={() => setQrPayloadType('vcard')}
+                      className={`p-2.5 rounded-xl border text-left cursor-pointer transition-all ${
+                        qrPayloadType === 'vcard'
+                          ? 'border-indigo-600 bg-indigo-50 dark:bg-indigo-950/50 text-indigo-900 dark:text-indigo-200 shadow-xs'
+                          : 'border-slate-200 dark:border-slate-700 hover:border-slate-300 text-slate-600 dark:text-slate-400'
+                      }`}
+                    >
+                      <div className="flex items-center space-x-1.5 text-indigo-600 dark:text-indigo-400 mb-0.5">
+                        <FileText className="w-3.5 h-3.5" />
+                        <span className="text-[11px] font-bold">VCard Kontak</span>
+                      </div>
+                      <span className="text-[9px] text-slate-500 block truncate font-mono">
+                        Nama, No HP, NISN, Org
+                      </span>
+                    </button>
+
+                    <button
+                      onClick={() => setQrPayloadType('unique_id')}
+                      className={`p-2.5 rounded-xl border text-left cursor-pointer transition-all ${
+                        qrPayloadType === 'unique_id'
+                          ? 'border-indigo-600 bg-indigo-50 dark:bg-indigo-950/50 text-indigo-900 dark:text-indigo-200 shadow-xs'
+                          : 'border-slate-200 dark:border-slate-700 hover:border-slate-300 text-slate-600 dark:text-slate-400'
+                      }`}
+                    >
+                      <div className="flex items-center space-x-1.5 text-amber-600 dark:text-amber-400 mb-0.5">
+                        <Zap className="w-3.5 h-3.5" />
+                        <span className="text-[11px] font-bold">ID Unik Kilat</span>
+                      </div>
+                      <span className="text-[9px] text-slate-500 block truncate font-mono">
+                        UID-{currentStudent.id}-{currentStudent.nisn}
+                      </span>
+                    </button>
+
                     <button
                       onClick={() => setQrPayloadType('nisn')}
                       className={`p-2.5 rounded-xl border text-left cursor-pointer transition-all ${
                         qrPayloadType === 'nisn'
-                          ? 'border-indigo-600 bg-indigo-50 dark:bg-indigo-950/50 text-indigo-900 dark:text-indigo-200'
+                          ? 'border-indigo-600 bg-indigo-50 dark:bg-indigo-950/50 text-indigo-900 dark:text-indigo-200 shadow-xs'
                           : 'border-slate-200 dark:border-slate-700 hover:border-slate-300 text-slate-600 dark:text-slate-400'
                       }`}
                     >
@@ -358,7 +456,7 @@ export const StudentQrCodeModal: React.FC<StudentQrCodeModalProps> = ({
                       onClick={() => setQrPayloadType('std_code')}
                       className={`p-2.5 rounded-xl border text-left cursor-pointer transition-all ${
                         qrPayloadType === 'std_code'
-                          ? 'border-indigo-600 bg-indigo-50 dark:bg-indigo-950/50 text-indigo-900 dark:text-indigo-200'
+                          ? 'border-indigo-600 bg-indigo-50 dark:bg-indigo-950/50 text-indigo-900 dark:text-indigo-200 shadow-xs'
                           : 'border-slate-200 dark:border-slate-700 hover:border-slate-300 text-slate-600 dark:text-slate-400'
                       }`}
                     >
@@ -372,7 +470,7 @@ export const StudentQrCodeModal: React.FC<StudentQrCodeModalProps> = ({
                       onClick={() => setQrPayloadType('json')}
                       className={`p-2.5 rounded-xl border text-left cursor-pointer transition-all ${
                         qrPayloadType === 'json'
-                          ? 'border-indigo-600 bg-indigo-50 dark:bg-indigo-950/50 text-indigo-900 dark:text-indigo-200'
+                          ? 'border-indigo-600 bg-indigo-50 dark:bg-indigo-950/50 text-indigo-900 dark:text-indigo-200 shadow-xs'
                           : 'border-slate-200 dark:border-slate-700 hover:border-slate-300 text-slate-600 dark:text-slate-400'
                       }`}
                     >
@@ -407,36 +505,48 @@ export const StudentQrCodeModal: React.FC<StudentQrCodeModalProps> = ({
                   </div>
                 </div>
 
-                {/* Action Buttons: Download, Print, Copy */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-2">
+                {/* Action Buttons: Download QR, Download VCard, Print, Copy */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2">
+                  <button
+                    onClick={handleDownloadVCard}
+                    className="px-3 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl text-xs font-bold flex items-center justify-center space-x-1.5 transition-all cursor-pointer shadow-md shadow-emerald-600/20"
+                    title="Unduh file kontak digital VCard (.vcf) untuk kartu identitas atau kontak HP"
+                  >
+                    <FileText className="w-4 h-4" />
+                    <span>Unduh VCard (.vcf)</span>
+                  </button>
+
                   <button
                     onClick={handleDownloadPng}
-                    className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl text-xs font-bold flex items-center justify-center space-x-2 transition-all cursor-pointer shadow-md shadow-indigo-600/20"
+                    className="px-3 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl text-xs font-bold flex items-center justify-center space-x-1.5 transition-all cursor-pointer shadow-md shadow-indigo-600/20"
+                    title="Unduh file gambar QR Code PNG resolusi tinggi"
                   >
                     <Download className="w-4 h-4" />
-                    <span>Unduh PNG</span>
+                    <span>Unduh QR PNG</span>
                   </button>
 
                   <button
                     onClick={handlePrintCard}
-                    className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-2xl text-xs font-bold flex items-center justify-center space-x-2 transition-all cursor-pointer shadow-xs"
+                    className="px-3 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-2xl text-xs font-bold flex items-center justify-center space-x-1.5 transition-all cursor-pointer shadow-xs"
+                    title="Cetak kartu presensi siswa langsung ke printer"
                   >
                     <Printer className="w-4 h-4" />
-                    <span>Cetak Kartu QR</span>
+                    <span>Cetak Kartu</span>
                   </button>
 
                   <button
-                    onClick={handleCopyNisn}
-                    className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-2xl text-xs font-bold flex items-center justify-center space-x-2 transition-all cursor-pointer"
+                    onClick={handleCopyPayload}
+                    className="px-3 py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-2xl text-xs font-bold flex items-center justify-center space-x-1.5 transition-all cursor-pointer"
+                    title="Salin isi data payload QR/VCard ke clipboard"
                   >
                     {isCopied ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />}
-                    <span>{isCopied ? 'Tersalin!' : 'Salin NISN'}</span>
+                    <span>{isCopied ? 'Tersalin!' : 'Salin Teks'}</span>
                   </button>
                 </div>
 
                 {/* Instant Kiosk Instructions */}
                 <div className="p-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 rounded-2xl text-[11px] text-amber-800 dark:text-amber-300">
-                  💡 <strong>Panduan Cepat Presensi:</strong> Siswa dapat mengarahkan QR Code ini ke kamera pemindai gerbang pada menu <strong>Scan QR Presensi</strong> untuk konfirmasi kehadiran otomatis dalam hitungan &lt;1 detik.
+                  💡 <strong>Panduan Cepat Presensi:</strong> QR Code berformat <strong>VCard</strong> atau <strong>ID Unik</strong> dapat langsung dipindai pada kamera scanner gerbang untuk presensi instan tanpa mengetik manual.
                 </div>
               </div>
             </div>

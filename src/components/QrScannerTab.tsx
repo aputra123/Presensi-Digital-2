@@ -231,6 +231,42 @@ export const QrScannerTab: React.FC<QrScannerTabProps> = ({
     setTimeout(() => setUndoFeedback(null), 4000);
   };
 
+  const parseRawScan = (raw: string): { type: 'student' | 'teacher' | 'unknown'; identifier: string; id?: string } => {
+    const text = raw.trim();
+
+    // Check VCard:
+    if (text.includes('BEGIN:VCARD')) {
+      const nisnMatch = text.match(/NISN[:\s]+([0-9]+)/i);
+      const uidMatch = text.match(/UID[:\s]+STUDENT-([a-zA-Z0-9_-]+)/i);
+      if (nisnMatch) return { type: 'student', identifier: nisnMatch[1] };
+      if (uidMatch) return { type: 'student', identifier: '', id: uidMatch[1] };
+    }
+
+    // Check JSON:
+    if (text.startsWith('{') && text.endsWith('}')) {
+      try {
+        const obj = JSON.parse(text);
+        if (obj.nisn) return { type: 'student', identifier: String(obj.nisn), id: obj.id };
+        if (obj.nip) return { type: 'teacher', identifier: String(obj.nip), id: obj.id };
+      } catch {}
+    }
+
+    // Check Unique ID format: UID-STD-<id>-<nisn>
+    if (text.startsWith('UID-STD-')) {
+      const parts = text.split('-');
+      const nisn = parts[parts.length - 1];
+      const stdId = parts[2];
+      return { type: 'student', identifier: nisn, id: stdId };
+    }
+
+    // Check Prefix STD-<nisn>
+    if (text.startsWith('STD-')) {
+      return { type: 'student', identifier: text.replace('STD-', '') };
+    }
+
+    return { type: 'unknown', identifier: text };
+  };
+
   const handleManualSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (isHolidayLocked) {
@@ -239,29 +275,59 @@ export const QrScannerTab: React.FC<QrScannerTabProps> = ({
     }
     if (!inputIdentifier.trim()) return;
 
-    if (personType === 'student') {
+    const parsed = parseRawScan(inputIdentifier);
+    const idToSearch = parsed.identifier || inputIdentifier.trim();
+
+    if (personType === 'student' || parsed.type === 'student') {
       const found = safeStudents.find(
         (s) =>
-          s.nisn === inputIdentifier.trim() ||
-          s.name.toLowerCase().includes(inputIdentifier.toLowerCase())
+          s.nisn === idToSearch ||
+          (Boolean(parsed.id) && s.id === parsed.id) ||
+          s.name.toLowerCase().includes(idToSearch.toLowerCase())
       );
       if (found) {
         handleScanPerson(found);
-      } else {
-        alert('NISN atau Nama Siswa tidak ditemukan dalam database.');
-      }
-    } else {
-      const found = safeTeachers.find(
-        (t) =>
-          t.nip === inputIdentifier.trim() ||
-          t.name.toLowerCase().includes(inputIdentifier.toLowerCase())
-      );
-      if (found) {
-        handleScanPerson(found);
-      } else {
-        alert('NIP atau Nama Guru tidak ditemukan dalam database.');
+        return;
       }
     }
+
+    if (personType === 'teacher' || parsed.type === 'teacher') {
+      const found = safeTeachers.find(
+        (t) =>
+          t.nip === idToSearch ||
+          (Boolean(parsed.id) && t.id === parsed.id) ||
+          t.name.toLowerCase().includes(idToSearch.toLowerCase())
+      );
+      if (found) {
+        handleScanPerson(found);
+        return;
+      }
+    }
+
+    // Fallback: search across both students and teachers
+    const foundStudent = safeStudents.find(
+      (s) =>
+        s.nisn === idToSearch ||
+        (Boolean(parsed.id) && s.id === parsed.id) ||
+        s.name.toLowerCase().includes(idToSearch.toLowerCase())
+    );
+    if (foundStudent) {
+      handleScanPerson(foundStudent);
+      return;
+    }
+
+    const foundTeacher = safeTeachers.find(
+      (t) =>
+        t.nip === idToSearch ||
+        (Boolean(parsed.id) && t.id === parsed.id) ||
+        t.name.toLowerCase().includes(idToSearch.toLowerCase())
+    );
+    if (foundTeacher) {
+      handleScanPerson(foundTeacher);
+      return;
+    }
+
+    alert('Data Siswa atau Guru tidak ditemukan untuk kode pemindaian ini.');
   };
 
   // Filter list for quick click simulation

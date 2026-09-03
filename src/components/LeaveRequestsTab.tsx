@@ -17,7 +17,7 @@ import {
   Share2,
   Filter,
 } from 'lucide-react';
-import { LeaveRequest, Student, Teacher } from '../types';
+import { LeaveRequest, SchoolConfig, Student, Teacher } from '../types';
 import { formatDateIndo, playBeepSound } from '../utils/soundAndDate';
 import { DocumentViewer, DocumentItem } from './DocumentViewer';
 import { sendWhatsAppNotification, generateLeaveWhatsAppMessage } from '../utils/whatsapp';
@@ -26,6 +26,7 @@ interface LeaveRequestsTabProps {
   leaves?: LeaveRequest[];
   students?: Student[];
   teachers?: Teacher[];
+  config?: SchoolConfig;
   todayDate: string;
   onAddLeaveRequest: (req: LeaveRequest) => void;
   onUpdateLeaveStatus: (id: string, status: 'approved' | 'rejected', reviewNote?: string) => void;
@@ -38,6 +39,7 @@ export const LeaveRequestsTab: React.FC<LeaveRequestsTabProps> = ({
   leaves = [],
   students = [],
   teachers = [],
+  config,
   todayDate,
   onAddLeaveRequest,
   onUpdateLeaveStatus,
@@ -161,7 +163,7 @@ export const LeaveRequestsTab: React.FC<LeaveRequestsTabProps> = ({
     const student = safeStudents.find((s) => s.id === item.personId);
     const teacher = safeTeachers.find((t) => t.id === item.personId);
     const phone = student?.parentPhone || teacher?.phone || '6281299887766';
-    const msg = generateLeaveWhatsAppMessage(item, student?.parentName);
+    const msg = generateLeaveWhatsAppMessage(item, config?.schoolName);
     sendWhatsAppNotification(phone, msg);
   };
 

@@ -18,6 +18,7 @@ import {
   AlertTriangle,
   Info,
   XCircle,
+  X,
   FileSpreadsheet,
   Trash2,
   Plus,
@@ -69,16 +70,18 @@ export const ActivityLogsTab: React.FC<ActivityLogsTabProps> = ({
 
   const filteredLogs = useMemo(() => {
     return safeLogs.filter((log) => {
-      // Search
-      const q = searchQuery.toLowerCase();
+      // Search by description or target ID, action, target name, actor, etc.
+      const q = searchQuery.toLowerCase().trim();
       const matchSearch =
         !q ||
-        log.action.toLowerCase().includes(q) ||
         log.description.toLowerCase().includes(q) ||
+        (Boolean(log.targetId) && log.targetId!.toLowerCase().includes(q)) ||
+        log.action.toLowerCase().includes(q) ||
+        (Boolean(log.targetName) && log.targetName!.toLowerCase().includes(q)) ||
         log.actor.name.toLowerCase().includes(q) ||
         log.actor.role.toLowerCase().includes(q) ||
-        (log.targetName && log.targetName.toLowerCase().includes(q)) ||
-        (log.deviceInfo && log.deviceInfo.toLowerCase().includes(q));
+        log.id.toLowerCase().includes(q) ||
+        (Boolean(log.deviceInfo) && log.deviceInfo!.toLowerCase().includes(q));
 
       // Category
       const matchCategory = selectedCategory === 'all' || log.category === selectedCategory;
@@ -240,6 +243,22 @@ export const ActivityLogsTab: React.FC<ActivityLogsTabProps> = ({
               <span>Ekspor Audit (.CSV)</span>
             </button>
 
+            {onClearLogs && safeLogs.length > 0 && (
+              <button
+                id="clear-audit-logs-btn"
+                onClick={() => {
+                  if (confirm('Kosongkan seluruh riwayat dan log audit? Data log akan direset ke status kosong.')) {
+                    onClearLogs();
+                  }
+                }}
+                className="inline-flex items-center gap-2 px-3.5 py-2.5 bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 text-sm font-medium rounded-xl border border-rose-800/60 transition-all active:scale-95"
+                title="Kosongkan seluruh riwayat log aktivitas"
+              >
+                <Trash2 className="w-4 h-4 text-rose-400" />
+                <span>Kosongkan Riwayat</span>
+              </button>
+            )}
+
             {userRole === 'admin' && (
               <button
                 id="add-manual-log-btn"
@@ -280,18 +299,27 @@ export const ActivityLogsTab: React.FC<ActivityLogsTabProps> = ({
         </div>
       </div>
 
-      {/* Filter and Search Bar */}
+      {/* Filter and Search Bar with Description & Target ID emphasis */}
       <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 shadow-sm border border-slate-200 dark:border-slate-800 flex flex-col md:flex-row items-center justify-between gap-4">
-        <div className="relative w-full md:w-80">
+        <div className="relative w-full md:w-96">
           <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
             id="search-audit-log"
             type="text"
-            placeholder="Cari aksi, nama aktor, perangkat..."
+            placeholder="Cari deskripsi atau Target ID (NIP/NISN/UUID)..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-9 pr-4 py-2 text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            className="w-full pl-9 pr-9 py-2 text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
           />
+          {searchQuery && (
+            <button
+              onClick={() => setSearchQuery('')}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-0.5"
+              title="Hapus pencarian"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto">
@@ -358,6 +386,16 @@ export const ActivityLogsTab: React.FC<ActivityLogsTabProps> = ({
         </div>
       </div>
 
+      {searchQuery && (
+        <div className="flex items-center space-x-2 text-xs px-2 text-slate-600 dark:text-slate-300">
+          <span className="font-semibold">Filter Aktif:</span>
+          <span className="bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 px-2 py-0.5 rounded-md border border-indigo-200 dark:border-indigo-800">
+            Mencari Deskripsi / Target ID: &ldquo;{searchQuery}&rdquo;
+          </span>
+          <span className="text-slate-400">({filteredLogs.length} hasil ditemukan)</span>
+        </div>
+      )}
+
       {/* Logs Table / List */}
       <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800 overflow-hidden">
         <div className="p-4 sm:p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
@@ -375,8 +413,23 @@ export const ActivityLogsTab: React.FC<ActivityLogsTabProps> = ({
         {filteredLogs.length === 0 ? (
           <div className="p-12 text-center">
             <Info className="w-10 h-10 text-slate-400 mx-auto mb-3" />
-            <p className="text-slate-600 dark:text-slate-400 font-medium">Tidak ada data log yang sesuai dengan filter.</p>
-            <p className="text-xs text-slate-400 mt-1">Coba sesuaikan kata kunci pencarian atau bersihkan filter di atas.</p>
+            {safeLogs.length === 0 ? (
+              <>
+                <p className="text-slate-800 dark:text-slate-200 font-bold text-base">
+                  Belum Ada Riwayat Aktivitas & Presensi (Data Kosong)
+                </p>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-md mx-auto">
+                  Jika belum pernah melakukan absensi atau aksi sistem, log audit dan riwayat akan tetap bersih dan kosong.
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="text-slate-600 dark:text-slate-400 font-medium">
+                  Tidak ada data log yang sesuai dengan filter atau pencarian &ldquo;{searchQuery}&rdquo;.
+                </p>
+                <p className="text-xs text-slate-400 mt-1">Coba sesuaikan kata kunci deskripsi, Target ID, atau bersihkan filter di atas.</p>
+              </>
+            )}
           </div>
         ) : (
           <div className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -419,9 +472,18 @@ export const ActivityLogsTab: React.FC<ActivityLogsTabProps> = ({
                           {log.description}
                         </p>
 
-                        {log.targetName && (
-                          <div className="text-xs text-indigo-600 dark:text-indigo-400 font-medium">
-                            Target: {log.targetName}
+                        {(Boolean(log.targetName) || Boolean(log.targetId)) && (
+                          <div className="flex flex-wrap items-center gap-2 text-xs">
+                            {log.targetName && (
+                              <span className="text-indigo-600 dark:text-indigo-400 font-medium">
+                                Target: {log.targetName}
+                              </span>
+                            )}
+                            {log.targetId && (
+                              <span className="px-2 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 font-mono text-[11px] font-bold">
+                                Target ID: {log.targetId}
+                              </span>
+                            )}
                           </div>
                         )}
 
