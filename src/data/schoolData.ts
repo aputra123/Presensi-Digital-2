@@ -33,6 +33,9 @@ export const INITIAL_SCHOOL_CONFIG: SchoolConfig = {
   principalName: 'Drs. Ruslan La Ode, M.Pd.',
   principalNip: '197405121999031004',
   adminName: 'Hendra Hasan, S.Pd. (Admin Dapodik/BKD)',
+  gtkLetterNumberFormat: '421.3/{NOMOR}/SMPN4-STB/GTK/{BULAN_ROMAWI}/{TAHUN}',
+  gtkLetterLastNumber: 45,
+  googleDriveFolderId: 'https://drive.google.com/drive/folders/1SMPN4_Taliabu_Presensi_Folder2026',
 };
 
 export const INITIAL_CLASSES: SchoolClass[] = [];

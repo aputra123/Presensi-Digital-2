@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   ActiveTab,
   AttendanceRecord,
@@ -40,6 +40,7 @@ import { SelfieGpsTab } from './components/SelfieGpsTab';
 import { BiometricLogsTab } from './components/BiometricLogsTab';
 import { DailyBackupPromptModal } from './components/DailyBackupPromptModal';
 import { BatchClassAttendance } from './components/BatchClassAttendance';
+import { AsnAttendanceTableTab } from './components/AsnAttendanceTableTab';
 import { RekapitulasiView } from './components/RekapitulasiView';
 import { BKDTaliabuAutomationTab } from './components/BKDTaliabuAutomationTab';
 import { LeaveRequestsTab } from './components/LeaveRequestsTab';
@@ -55,13 +56,19 @@ import { AcademicCalendarTab } from './components/AcademicCalendarTab';
 import { ConfigTab } from './components/ConfigTab';
 import { PrintModal } from './components/PrintModal';
 import { AppInstallModal } from './components/AppInstallModal';
+import { OfflineBlankspotModal } from './components/OfflineBlankspotModal';
 import { QuickActionsFab } from './components/QuickActionsFab';
 import { SystemSyncStatusFooter } from './components/SystemSyncStatusFooter';
+import { AdminAuthGate } from './components/AdminAuthGate';
 import { School, ShieldCheck, Sparkles, HardDrive, AlertOctagon, Lock } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
 import { playBeepSound, formatDateIndo } from './utils/soundAndDate';
 import { saveBackupToFirestore } from './lib/firebase';
 import { syncManager } from './utils/syncManager';
 import { notifyAbsenceOrLateViaWhatsApp } from './utils/whatsapp';
+import { UserSession, getStoredSession, hasClaim, verifyRemoteSession } from './utils/authSession';
+import { fetchCsrfToken, fetchWithCsrf } from './utils/csrf';
+import { sanitizeObject, sanitizeName, sanitizeReason, sanitizeAttendanceRecord } from './utils/sanitizer';
 
 export default function App() {
   const todayDate = getTodayDateString();
@@ -214,7 +221,11 @@ export default function App() {
   });
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
-  const [userRole, setUserRole] = useState<UserRole>('admin');
+  const [session, setSession] = useState<UserSession | null>(() => getStoredSession());
+  const [userRole, setUserRole] = useState<UserRole>(() => {
+    const saved = getStoredSession();
+    return saved?.user?.role || 'admin';
+  });
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(() => {
     try {
@@ -240,6 +251,32 @@ export default function App() {
   const [isDailyBackupModalOpen, setIsDailyBackupModalOpen] = useState(false);
   const [isInstallModalOpen, setIsInstallModalOpen] = useState(false);
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+
+  // Offline Blankspot Mode & Synchronization State
+  const [isOnline, setIsOnline] = useState<boolean>(() =>
+    typeof navigator !== 'undefined' ? navigator.onLine : true
+  );
+  const [isManualBlankspot, setIsManualBlankspot] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('school_presensi_manual_blankspot') === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const [isOfflineModalOpen, setIsOfflineModalOpen] = useState(false);
+
+  // Initialize CSRF protection token and verify active remote session
+  useEffect(() => {
+    fetchCsrfToken().catch((err) => console.warn('CSRF Token fetch notice:', err));
+    verifyRemoteSession().then((remoteSession) => {
+      if (remoteSession) {
+        setSession(remoteSession);
+        if (remoteSession.user?.role) {
+          setUserRole(remoteSession.user.role);
+        }
+      }
+    }).catch((err) => console.warn('Remote session verification notice:', err));
+  }, []);
 
   // Sync collapsed & locked state to localStorage
   useEffect(() => {
@@ -525,15 +562,28 @@ export default function App() {
 
   // Biometric Logs Handler with Anomaly Hook Trigger
   const handleAddBiometricLog = useCallback((newLog: BiometricLog) => {
+    const cleanLog = sanitizeObject(newLog);
     setBiometricLogs((prev) => {
-      const updated = [newLog, ...prev];
-      const pid = newLog.personId || newLog.identifier || newLog.personName;
+      const updated = [cleanLog, ...prev];
+      const pid = cleanLog.personId || cleanLog.identifier || cleanLog.personName;
       setTimeout(() => {
         checkBiometricConsecutiveFailures(updated, pid);
       }, 50);
       return updated;
     });
-  }, [checkBiometricConsecutiveFailures]);
+
+    // Send biometric log update through CSRF-protected & sliding-window rate-limited backend API
+    fetchWithCsrf('/api/biometric-logs', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': session?.token ? `Bearer ${session.token}` : '',
+      },
+      body: JSON.stringify({ log: cleanLog }),
+    }).catch((err) => {
+      console.warn('Biometric log CSRF submission notice:', err);
+    });
+  }, [checkBiometricConsecutiveFailures, session?.token]);
 
   // Duty Roster Handlers
   const handleAddOrUpdateDuty = (duty: DutyAssignment) => {
@@ -598,9 +648,23 @@ export default function App() {
   // Realtime Cloud Handshake Sync Trigger with Exponential Backoff
   const handleTriggerHandshakeSync = async () => {
     try {
-      const payload = generateBackupPayload();
+      const rawPayload = generateBackupPayload();
+      const payload = sanitizeObject(rawPayload);
       syncManager.enqueue('backup_snapshot', payload);
       await syncManager.processQueue();
+
+      // Trigger CSRF-verified database sync endpoint
+      fetchWithCsrf('/api/sync/database', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': session?.token ? `Bearer ${session.token}` : '',
+        },
+        body: JSON.stringify({ backupData: payload }),
+      }).catch((err) => {
+        console.warn('Backend sync API notice:', err);
+      });
+
       setLastHandshakeTime(new Date());
     } catch (e) {
       console.warn('[Sync] Offline / Retry scheduled:', e);
@@ -702,8 +766,96 @@ export default function App() {
     }
   }, [generateBackupPayload, todayDate]);
 
+  // Offline Blankspot Mode & Synchronization Handlers
+  const handleToggleManualBlankspot = useCallback((enabled: boolean) => {
+    setIsManualBlankspot(enabled);
+    try {
+      localStorage.setItem('school_presensi_manual_blankspot', String(enabled));
+    } catch {}
+    
+    const notif: ToastNotification = {
+      id: `notif_blankspot_${Date.now()}`,
+      title: enabled ? 'Mode Blankspot Darurat Diaktifkan' : 'Mode Normal (Online) Aktif',
+      message: enabled
+        ? 'Sistem dioptimalkan untuk wilayah tanpa sinyal internet. Semua scan presensi akan disimpan aman secara offline di perangkat ini.'
+        : 'Sistem kembali terhubung dengan sinkronisasi online.',
+      type: 'system',
+      timestamp: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WITA',
+      read: false,
+    };
+    setNotifications((prev) => [notif, ...prev.slice(0, 8)]);
+  }, []);
+
+  const pendingOfflineCount = useMemo(() => {
+    return records.filter((r) => r.syncStatus === 'pending_sync').length;
+  }, [records]);
+
+  // Synchronize all pending offline records to cloud/server
+  const handleSyncPendingRecords = useCallback(async (): Promise<boolean> => {
+    const pending = records.filter((r) => r.syncStatus === 'pending_sync');
+    if (pending.length === 0) return true;
+
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      const nowIso = new Date().toISOString();
+      setRecords((prev) =>
+        prev.map((r) =>
+          r.syncStatus === 'pending_sync'
+            ? { ...r, syncStatus: 'synced', isOfflineRecord: false, syncedAt: nowIso }
+            : r
+        )
+      );
+
+      // Trigger cloud Firestore backup snapshot
+      try {
+        const payload = generateBackupPayload();
+        await saveBackupToFirestore(payload);
+        setLastHandshakeTime(new Date());
+      } catch (err) {
+        console.warn('Sync cloud write notice:', err);
+      }
+
+      const syncNotif: ToastNotification = {
+        id: `notif_sync_${Date.now()}`,
+        title: 'Presensi Offline Berhasil Disinkronkan',
+        message: `${pending.length} data presensi offline wilayah blankspot telah sukses dikirim ke server pusat!`,
+        type: 'system',
+        timestamp: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WITA',
+        read: false,
+      };
+      setNotifications((prev) => [syncNotif, ...prev.slice(0, 12)]);
+      return true;
+    } catch (err) {
+      console.error('Failed to sync offline records:', err);
+      return false;
+    }
+  }, [records, generateBackupPayload]);
+
+  // Auto-listen to window online/offline events
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      // If there are pending records and not manually held in blankspot, attempt background sync
+      if (!isManualBlankspot) {
+        handleSyncPendingRecords();
+      }
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [handleSyncPendingRecords, isManualBlankspot]);
+
   // Restore Full System Backup
-  const handleRestoreBackup = (backupData: AppBackupData) => {
+  const handleRestoreBackup = (rawBackupData: AppBackupData) => {
+    const backupData = sanitizeObject(rawBackupData);
     if (backupData.config) setConfig(backupData.config);
     if (backupData.classes) setClasses(backupData.classes);
     if (backupData.students) setStudents(backupData.students);
@@ -727,31 +879,40 @@ export default function App() {
     setNotifications((prev) => [notif, ...prev.slice(0, 8)]);
   };
 
-  // Attendance Handlers
+  // Attendance Handlers with centralized input sanitation
   const handleRecordAttendance = (newRecord: AttendanceRecord) => {
+    const cleanRecord = sanitizeAttendanceRecord(newRecord);
+    const isEffectivelyOffline = !isOnline || isManualBlankspot;
+    const finalRecord: AttendanceRecord = {
+      ...cleanRecord,
+      syncStatus: cleanRecord.syncStatus || (isEffectivelyOffline ? 'pending_sync' : 'synced'),
+      isOfflineRecord: cleanRecord.isOfflineRecord ?? isEffectivelyOffline,
+      syncedAt: isEffectivelyOffline ? undefined : cleanRecord.syncedAt || new Date().toISOString(),
+    };
+
     setRecords((prev) => {
       const existsIndex = prev.findIndex(
         (r) =>
-          r.personId === newRecord.personId &&
-          r.date === newRecord.date &&
-          r.type === newRecord.type
+          r.personId === finalRecord.personId &&
+          r.date === finalRecord.date &&
+          r.type === finalRecord.type
       );
       if (existsIndex >= 0) {
         const updated = [...prev];
-        updated[existsIndex] = newRecord;
+        updated[existsIndex] = finalRecord;
         return updated;
       }
-      return [newRecord, ...prev];
+      return [finalRecord, ...prev];
     });
 
-    // Auto-trigger WhatsApp notification if marked as alpa or terlambat
-    if (newRecord.status === 'alpa' || newRecord.status === 'terlambat') {
+    // Auto-trigger WhatsApp notification if marked as alpa or terlambat (only when effectively online)
+    if (!isEffectivelyOffline && (finalRecord.status === 'alpa' || finalRecord.status === 'terlambat')) {
       try {
         const person =
-          newRecord.personType === 'student'
-            ? students.find((s) => s.id === newRecord.personId || s.nisn === newRecord.identifier)
-            : teachers.find((t) => t.id === newRecord.personId || t.nip === newRecord.identifier);
-        notifyAbsenceOrLateViaWhatsApp(newRecord, config, person);
+          finalRecord.personType === 'student'
+            ? students.find((s) => s.id === finalRecord.personId || s.nisn === finalRecord.identifier)
+            : teachers.find((t) => t.id === finalRecord.personId || t.nip === finalRecord.identifier);
+        notifyAbsenceOrLateViaWhatsApp(finalRecord, config, person);
       } catch (e) {
         console.warn('Auto WhatsApp notification notice:', e);
       }
@@ -759,10 +920,14 @@ export default function App() {
 
     const newNotif: ToastNotification = {
       id: `notif_${Date.now()}`,
-      title: `Presensi ${newRecord.personType === 'student' ? 'Siswa' : 'Guru'} Berhasil`,
-      message: `${newRecord.personName} (${newRecord.classOrSubject}) status: ${newRecord.status.toUpperCase()} pada ${newRecord.time} WIB.`,
-      type: 'attendance',
-      timestamp: newRecord.time + ' WIB',
+      title: isEffectivelyOffline
+        ? `⚡ Presensi Disimpan Offline (Mode Blankspot)`
+        : `Presensi ${finalRecord.personType === 'student' ? 'Siswa' : 'Guru'} Berhasil`,
+      message: `${finalRecord.personName} (${finalRecord.classOrSubject}) status: ${finalRecord.status.toUpperCase()} pada ${finalRecord.time} WITA.${
+        isEffectivelyOffline ? ' Masuk antrean lokal & akan otomatis dikirim saat ada sinyal internet.' : ''
+      }`,
+      type: isEffectivelyOffline ? 'system' : 'attendance',
+      timestamp: finalRecord.time + ' WITA',
       read: false,
     };
     setNotifications((prev) => [newNotif, ...prev.slice(0, 8)]);
@@ -800,14 +965,35 @@ export default function App() {
 
   // Handlers for Student & Teacher Leaves
   const handleAddLeaveRequest = (newLeave: LeaveRequest) => {
-    setLeaves((prev) => [newLeave, ...prev]);
+    const safeLeave = sanitizeObject(newLeave);
+    if (safeLeave.personName) {
+      safeLeave.personName = sanitizeName(safeLeave.personName).value;
+    }
+    if (safeLeave.reason) {
+      safeLeave.reason = sanitizeReason(safeLeave.reason).value;
+    }
+
+    setLeaves((prev) => [safeLeave, ...prev]);
+
+    // CSRF and rate-limited backend persistence
+    fetchWithCsrf('/api/leave-requests', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': session?.token ? `Bearer ${session.token}` : '',
+      },
+      body: JSON.stringify({ leave: safeLeave }),
+    }).catch((err) => {
+      console.warn('Leave request submission notice:', err);
+    });
+
     const newNotif: ToastNotification = {
       id: `notif_${Date.now()}`,
-      title: `Pengajuan ${newLeave.type.toUpperCase()} Baru`,
-      message: `${newLeave.personName} (${newLeave.classOrSubject}) mengajukan permohonan izin/sakit.`,
+      title: `Pengajuan ${safeLeave.type.toUpperCase()} Baru`,
+      message: `${safeLeave.personName} (${safeLeave.classOrSubject}) mengajukan permohonan izin/sakit.`,
       type: 'leave_request',
-      timestamp: newLeave.createdAt + ' WIB',
-      leaveId: newLeave.id,
+      timestamp: safeLeave.createdAt + ' WIB',
+      leaveId: safeLeave.id,
       read: false,
     };
     setNotifications((prev) => [newNotif, ...prev]);
@@ -821,11 +1007,35 @@ export default function App() {
 
   // Handlers for GTK Services & Dual Approval
   const handleAddGtkService = (newService: GtkServiceRequest) => {
-    setGtkServices((prev) => [newService, ...prev]);
+    const safeService = sanitizeObject(newService);
+    if (safeService.teacherName) {
+      safeService.teacherName = sanitizeName(safeService.teacherName).value;
+    }
+    if (safeService.title) {
+      safeService.title = sanitizeReason(safeService.title, 150).value;
+    }
+    if (safeService.purpose) {
+      safeService.purpose = sanitizeReason(safeService.purpose, 600).value;
+    }
+
+    setGtkServices((prev) => [safeService, ...prev]);
+
+    // CSRF and rate-limited backend persistence
+    fetchWithCsrf('/api/gtk-services', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': session?.token ? `Bearer ${session.token}` : '',
+      },
+      body: JSON.stringify({ service: safeService }),
+    }).catch((err) => {
+      console.warn('GTK service submission notice:', err);
+    });
+
     const newNotif: ToastNotification = {
       id: `notif_${Date.now()}`,
       title: 'Permohonan Layanan GTK Baru',
-      message: `${newService.teacherName} mengajukan ${newService.title}. Menunggu verifikasi Kepsek & Admin.`,
+      message: `${safeService.teacherName} mengajukan ${safeService.title}. Menunggu verifikasi Kepsek & Admin.`,
       type: 'leave_request',
       timestamp: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WIB',
       read: false,
@@ -888,25 +1098,91 @@ export default function App() {
   };
 
   const handleRejectGtkService = (serviceId: string, reason: string) => {
+    const defaultReason = reason || 'Permohonan ditolak oleh pejabat berwenang.';
+    let targetInfo = '';
     setGtkServices((prev) =>
       prev.map((item) => {
         if (item.id !== serviceId) return item;
+        targetInfo = `${item.title} - ${item.teacherName}`;
         return {
           ...item,
           status: 'rejected',
           kepsekApproval: {
             ...item.kepsekApproval,
             status: 'rejected',
-            note: reason,
+            note: defaultReason,
           },
           adminApproval: {
             ...item.adminApproval,
             status: 'rejected',
-            note: reason,
+            note: defaultReason,
           },
         };
       })
     );
+    const notif: ToastNotification = {
+      id: `notif_rej_${Date.now()}`,
+      title: 'Permohonan Layanan GTK Ditolak',
+      message: `Pengajuan ${targetInfo || 'Layanan GTK'} telah resmi ditolak: "${defaultReason}".`,
+      type: 'gtk_service',
+      timestamp: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WIB',
+      read: false,
+    };
+    setNotifications((prev) => [notif, ...prev.slice(0, 8)]);
+  };
+
+  const handleReturnGtkService = (serviceId: string, reason: string) => {
+    const defaultReason = reason || 'Berkas dikembalikan untuk revisi / perbaikan kelengkapan persyaratan.';
+    let targetInfo = '';
+    setGtkServices((prev) =>
+      prev.map((item) => {
+        if (item.id !== serviceId) return item;
+        targetInfo = `${item.title} - ${item.teacherName}`;
+        return {
+          ...item,
+          status: 'returned',
+          kepsekApproval: {
+            ...item.kepsekApproval,
+            status: 'returned',
+            note: defaultReason,
+          },
+          adminApproval: {
+            ...item.adminApproval,
+            status: 'returned',
+            note: defaultReason,
+          },
+        };
+      })
+    );
+    const notif: ToastNotification = {
+      id: `notif_ret_${Date.now()}`,
+      title: 'Berkas GTK Dikembalikan untuk Revisi',
+      message: `Pengajuan ${targetInfo || 'Layanan GTK'} telah dikembalikan ke pemohon: "${defaultReason}".`,
+      type: 'gtk_service',
+      timestamp: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WIB',
+      read: false,
+    };
+    setNotifications((prev) => [notif, ...prev.slice(0, 8)]);
+  };
+
+  const handleDeleteGtkService = (serviceId: string) => {
+    let deletedTitle = '';
+    setGtkServices((prev) => {
+      const target = prev.find((item) => item.id === serviceId);
+      if (target) deletedTitle = `${target.title} (${target.teacherName})`;
+      return prev.filter((item) => item.id !== serviceId);
+    });
+    const notif: ToastNotification = {
+      id: `notif_del_${Date.now()}`,
+      title: 'Layanan GTK Dihapus',
+      message: deletedTitle
+        ? `Pengajuan ${deletedTitle} telah berhasil dihapus dari sistem.`
+        : 'Permohonan layanan GTK berhasil dihapus dari sistem.',
+      type: 'gtk_service',
+      timestamp: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WIB',
+      read: false,
+    };
+    setNotifications((prev) => [notif, ...prev.slice(0, 8)]);
   };
 
   // Student CRUD
@@ -985,6 +1261,19 @@ export default function App() {
       message: `Foto ${newDoc.type === 'apel_pagi' ? 'Apel Pagi' : 'Apel Siang'} ${newDoc.date} dengan geolokasi presisi telah dicatat ke arsip BKD.`,
       type: 'system',
       timestamp: newDoc.time + ' WITA',
+      read: false,
+    };
+    setNotifications((prev) => [notif, ...prev.slice(0, 8)]);
+  };
+
+  const handleUpdateApelDoc = (updatedDoc: ApelDocumentation) => {
+    setApelDocs((prev) => prev.map((d) => (d.id === updatedDoc.id ? updatedDoc : d)));
+    const notif: ToastNotification = {
+      id: `notif_apel_upd_${Date.now()}`,
+      title: 'Keterangan Dokumentasi Diperbarui',
+      message: `Perubahan tanggal/jam/lokasi foto dokumentasi apel ${updatedDoc.date} telah disimpan dan diselaraskan ke sistem BKD.`,
+      type: 'system',
+      timestamp: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WITA',
       read: false,
     };
     setNotifications((prev) => [notif, ...prev.slice(0, 8)]);
@@ -1158,7 +1447,7 @@ export default function App() {
   const todayRecordsCount = safeRecords.filter((r) => r.date === todayDate).length;
 
   return (
-    <div className="min-h-screen flex bg-[#F8FAFC] text-slate-900 selection:bg-indigo-600 selection:text-white font-sans antialiased">
+    <div className="min-h-screen flex bg-[#FAFAFA] text-slate-800 selection:bg-slate-900 selection:text-white font-sans antialiased">
       {/* Sidebar Navigation */}
       <Sidebar
         activeTab={activeTab}
@@ -1166,6 +1455,10 @@ export default function App() {
         config={config}
         userRole={userRole}
         setUserRole={setUserRole}
+        session={session}
+        onRequestRoleChange={(newRole) => {
+          setUserRole(newRole);
+        }}
         pendingLeavesCount={pendingLeavesCount + pendingGtkCount}
         totalTodayCount={todayRecordsCount}
         isMobileOpen={isMobileSidebarOpen}
@@ -1198,6 +1491,10 @@ export default function App() {
           onTriggerSimulation={handleTriggerSimulation}
           onOpenBackupPrompt={() => setIsDailyBackupModalOpen(true)}
           onOpenInstallModal={() => setIsInstallModalOpen(true)}
+          onOpenOfflineModal={() => setIsOfflineModalOpen(true)}
+          isOnline={isOnline}
+          isManualBlankspot={isManualBlankspot}
+          pendingOfflineCount={pendingOfflineCount}
           pendingLeaves={safeLeaves}
           activeTab={activeTab}
           setActiveTab={setActiveTab}
@@ -1219,30 +1516,39 @@ export default function App() {
         <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto space-y-6">
           {/* Emergency System Lockdown Banner */}
           {isSystemLocked && (
-            <div className="bg-rose-500 text-white rounded-3xl p-4 sm:p-5 shadow-xl flex items-center justify-between gap-4 animate-in fade-in duration-300 border-2 border-rose-400">
+            <div className="bg-rose-50 border border-rose-200 text-rose-900 rounded-xl p-4 flex items-center justify-between gap-4">
               <div className="flex items-center space-x-3">
-                <div className="w-10 h-10 rounded-2xl bg-white/20 flex items-center justify-center shrink-0">
-                  <Lock className="w-5 h-5 text-white" />
+                <div className="w-8 h-8 rounded-lg bg-rose-100 flex items-center justify-center shrink-0">
+                  <Lock className="w-4 h-4 text-rose-700" />
                 </div>
                 <div>
-                  <h4 className="font-extrabold text-sm sm:text-base">
+                  <h4 className="font-semibold text-sm">
                     Sistem dalam Status Emergency Lockdown
                   </h4>
-                  <p className="text-xs text-rose-100">
+                  <p className="text-xs text-rose-700">
                     Penginputan presensi manual disuspend sementara oleh Administrator untuk menjaga integritas data.
                   </p>
                 </div>
               </div>
               <button
                 onClick={() => handleToggleSystemLock(false)}
-                className="px-4 py-2 bg-white text-rose-700 hover:bg-rose-50 rounded-2xl text-xs font-black shrink-0 transition-colors shadow-xs"
+                className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-medium shrink-0 transition-colors cursor-pointer"
               >
-                Buka Kunci (Unlock)
+                Buka Kunci
               </button>
             </div>
           )}
 
-          {activeTab === 'dashboard' && (
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={activeTab}
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+              className="w-full space-y-6"
+            >
+              {activeTab === 'dashboard' && (
             <DashboardStats
               records={records}
               students={students}
@@ -1277,6 +1583,10 @@ export default function App() {
               onRecordAttendance={handleRecordAttendance}
               onDeleteRecord={handleDeleteRecord}
               existingRecords={records}
+              isOnline={isOnline}
+              isManualBlankspot={isManualBlankspot}
+              onOpenOfflineModal={() => setIsOfflineModalOpen(true)}
+              pendingOfflineCount={pendingOfflineCount}
             />
           )}
 
@@ -1316,6 +1626,18 @@ export default function App() {
             />
           )}
 
+          {activeTab === 'tabel_absensi_asn' && (
+            <AsnAttendanceTableTab
+              teachers={teachers}
+              records={records}
+              config={config}
+              userRole={userRole}
+              todayDate={todayDate}
+              onAddTeacher={handleAddTeacher}
+              onRecordAttendance={handleRecordAttendance}
+            />
+          )}
+
           {activeTab === 'rekap' && (
             <RekapitulasiView
               records={records}
@@ -1328,6 +1650,11 @@ export default function App() {
               onClearAttendance={handleClearAllAttendance}
               onNavigateToScan={() => setActiveTab('scan')}
               userRole={userRole}
+              isOnline={isOnline}
+              isManualBlankspot={isManualBlankspot}
+              pendingOfflineCount={pendingOfflineCount}
+              onOpenOfflineModal={() => setIsOfflineModalOpen(true)}
+              onSyncPendingRecords={handleSyncPendingRecords}
               onOpenPrintModal={(customRecs, dateLabel) =>
                 setPrintModalState({
                   isOpen: true,
@@ -1340,15 +1667,29 @@ export default function App() {
           )}
 
           {activeTab === 'bkd_automation' && (
-            <BKDTaliabuAutomationTab
-              records={records}
-              teachers={teachers}
-              students={students}
-              config={config}
-              userRole={userRole}
-              onUpdateConfig={(updated) => setConfig((prev) => ({ ...prev, ...updated }))}
-              onAddLog={(newLog) => setActivityLogs((prev) => [newLog, ...prev])}
-            />
+            !hasClaim('admin_access', session) ? (
+              <AdminAuthGate
+                requiredClaim="admin_access"
+                tabTitle="Sinkronisasi & Otomasi BKD"
+                currentRole={userRole}
+                onRoleChange={(newRole) => setUserRole(newRole)}
+                onSuccess={(newSession) => {
+                  setSession(newSession);
+                  setUserRole(newSession.user.role);
+                }}
+                onCancel={() => setActiveTab('dashboard')}
+              />
+            ) : (
+              <BKDTaliabuAutomationTab
+                records={records}
+                teachers={teachers}
+                students={students}
+                config={config}
+                userRole={userRole}
+                onUpdateConfig={(updated) => setConfig((prev) => ({ ...prev, ...updated }))}
+                onAddLog={(newLog) => setActivityLogs((prev) => [newLog, ...prev])}
+              />
+            )
           )}
 
           {activeTab === 'layanan_gtk' && (
@@ -1361,6 +1702,8 @@ export default function App() {
               onApproveKepsek={handleApproveGtkKepsek}
               onApproveAdmin={handleApproveGtkAdmin}
               onRejectService={handleRejectGtkService}
+              onReturnService={handleReturnGtkService}
+              onDeleteService={handleDeleteGtkService}
             />
           )}
 
@@ -1380,13 +1723,27 @@ export default function App() {
           )}
 
           {activeTab === 'logs' && (
-            <ActivityLogsTab
-              logs={activityLogs}
-              onClearLogs={() => setActivityLogs([])}
-              onAddLog={(newLog) => setActivityLogs((prev) => [newLog, ...prev])}
-              schoolConfig={config}
-              userRole={userRole}
-            />
+            !hasClaim('audit_logs', session) ? (
+              <AdminAuthGate
+                requiredClaim="audit_logs"
+                tabTitle="Log Aktivitas & Audit Presensi"
+                currentRole={userRole}
+                onRoleChange={(newRole) => setUserRole(newRole)}
+                onSuccess={(newSession) => {
+                  setSession(newSession);
+                  setUserRole(newSession.user.role);
+                }}
+                onCancel={() => setActiveTab('dashboard')}
+              />
+            ) : (
+              <ActivityLogsTab
+                logs={activityLogs}
+                onClearLogs={() => setActivityLogs([])}
+                onAddLog={(newLog) => setActivityLogs((prev) => [newLog, ...prev])}
+                schoolConfig={config}
+                userRole={userRole}
+              />
+            )
           )}
 
           {activeTab === 'leaves' && (
@@ -1452,6 +1809,7 @@ export default function App() {
               teachers={teachers}
               apelDocs={apelDocs}
               onAddApelDoc={handleAddApelDoc}
+              onUpdateApelDoc={handleUpdateApelDoc}
               onDeleteApelDoc={handleDeleteApelDoc}
               onClearAllApelDocs={() => setApelDocs([])}
             />
@@ -1466,24 +1824,40 @@ export default function App() {
           )}
 
           {activeTab === 'config' && (
-            <ConfigTab
-              config={config}
-              records={records}
-              students={students}
-              teachers={teachers}
-              classes={classes}
-              leaves={leaves}
-              gtkServices={gtkServices}
-              events={events}
-              activityLogs={activityLogs}
-              biometricLogs={biometricLogs}
-              onSaveConfig={setConfig}
-              onResetToDefault={handleResetToDefault}
-              onRestoreBackup={handleRestoreBackup}
-              onClearAllHistory={handleClearAllHistory}
-              onWipeAllDummyData={handleWipeAllDummyData}
-            />
+            !hasClaim('system_config', session) ? (
+              <AdminAuthGate
+                requiredClaim="system_config"
+                tabTitle="Pengaturan Sistem & Database Presensi"
+                currentRole={userRole}
+                onRoleChange={(newRole) => setUserRole(newRole)}
+                onSuccess={(newSession) => {
+                  setSession(newSession);
+                  setUserRole(newSession.user.role);
+                }}
+                onCancel={() => setActiveTab('dashboard')}
+              />
+            ) : (
+              <ConfigTab
+                config={config}
+                records={records}
+                students={students}
+                teachers={teachers}
+                classes={classes}
+                leaves={leaves}
+                gtkServices={gtkServices}
+                events={events}
+                activityLogs={activityLogs}
+                biometricLogs={biometricLogs}
+                onSaveConfig={setConfig}
+                onResetToDefault={handleResetToDefault}
+                onRestoreBackup={handleRestoreBackup}
+                onClearAllHistory={handleClearAllHistory}
+                onWipeAllDummyData={handleWipeAllDummyData}
+              />
+            )
           )}
+            </motion.div>
+          </AnimatePresence>
         </main>
 
         {/* Global Daily Backup Safety Prompt Modal */}
@@ -1513,6 +1887,20 @@ export default function App() {
           onToggleSystemLock={handleToggleSystemLock}
           onAddEmergencyAbsence={handleAddEmergencyAbsence}
           onNavigateTab={setActiveTab}
+        />
+
+        {/* Offline & Blankspot Synchronizer Modal */}
+        <OfflineBlankspotModal
+          isOpen={isOfflineModalOpen}
+          onClose={() => setIsOfflineModalOpen(false)}
+          isOnline={isOnline}
+          isManualBlankspot={isManualBlankspot}
+          onToggleManualBlankspot={handleToggleManualBlankspot}
+          pendingRecords={records.filter((r) => r.syncStatus === 'pending_sync')}
+          allRecords={records}
+          config={config}
+          todayDate={todayDate}
+          onSyncPendingRecords={handleSyncPendingRecords}
         />
 
         {/* Global Modal for Document Print Preview */}

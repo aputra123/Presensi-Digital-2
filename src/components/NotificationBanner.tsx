@@ -21,6 +21,9 @@ import {
   FileCheck2,
   Trash2,
   Info,
+  Radio,
+  Wifi,
+  WifiOff,
 } from 'lucide-react';
 import { ActiveTab, LeaveRequest, SchoolConfig, ToastNotification, UserRole } from '../types';
 
@@ -42,6 +45,10 @@ interface NotificationBannerProps {
   onToggleFullScreen?: () => void;
   config: SchoolConfig;
   userRole: UserRole;
+  isOnline?: boolean;
+  isManualBlankspot?: boolean;
+  pendingOfflineCount?: number;
+  onOpenOfflineModal?: () => void;
 }
 
 export const NotificationBanner: React.FC<NotificationBannerProps> = ({
@@ -62,6 +69,10 @@ export const NotificationBanner: React.FC<NotificationBannerProps> = ({
   onToggleFullScreen,
   config,
   userRole,
+  isOnline = true,
+  isManualBlankspot = false,
+  pendingOfflineCount = 0,
+  onOpenOfflineModal,
 }) => {
   const [currentTime, setCurrentTime] = useState<string>('');
   const [currentDateStr, setCurrentDateStr] = useState<string>('');
@@ -95,13 +106,13 @@ export const NotificationBanner: React.FC<NotificationBannerProps> = ({
   return (
     <>
       {/* Top Fixed Header Bar */}
-      <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-slate-200/80 px-4 lg:px-8 py-3 flex items-center justify-between shadow-xs">
+      <header className="sticky top-0 z-30 bg-white border-b border-slate-200 px-4 lg:px-6 py-2.5 flex items-center justify-between">
         {/* Left: Sidebar Toggle & Breadcrumb */}
         <div className="flex items-center space-x-3">
           {/* Mobile Menu Button */}
           <button
             onClick={onOpenMobileMenu}
-            className="lg:hidden p-2 rounded-xl text-slate-600 hover:bg-slate-100 cursor-pointer"
+            className="lg:hidden p-1.5 rounded-lg text-slate-600 hover:bg-slate-100 cursor-pointer"
             aria-label="Buka Menu"
           >
             <Menu className="w-5 h-5" />
@@ -111,101 +122,65 @@ export const NotificationBanner: React.FC<NotificationBannerProps> = ({
           {onToggleSidebar && (
             <button
               onClick={onToggleSidebar}
-              className="hidden lg:flex items-center space-x-1.5 px-2.5 py-1.5 rounded-xl text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 border border-slate-200/80 transition-all cursor-pointer text-xs font-bold shadow-2xs"
-              title={isSidebarCollapsed ? 'Buka Sidebar Menu (Tampilkan)' : 'Sembunyikan Sidebar (Layar Penuh / Lebar)'}
+              className="hidden lg:flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-slate-50 border border-slate-200 transition-colors cursor-pointer text-xs font-medium"
+              title={isSidebarCollapsed ? 'Buka Sidebar Menu' : 'Sembunyikan Sidebar'}
             >
               {isSidebarCollapsed ? (
                 <>
-                  <PanelLeftOpen className="w-4 h-4 text-indigo-600" />
+                  <PanelLeftOpen className="w-3.5 h-3.5 text-slate-700" />
                   <span>Menu</span>
                 </>
               ) : (
                 <>
-                  <PanelLeftClose className="w-4 h-4" />
-                  <span className="hidden xl:inline">Sembunyikan Sidebar</span>
+                  <PanelLeftClose className="w-3.5 h-3.5 text-slate-500" />
+                  <span className="hidden xl:inline">Sembunyikan Menu</span>
                 </>
               )}
             </button>
           )}
 
           <div className="hidden sm:flex items-center space-x-2 text-xs">
-            <span className="font-bold text-slate-800 tracking-tight">
+            <span className="font-medium text-slate-900 tracking-tight">
               {config.schoolName}
             </span>
             <span className="text-slate-300">•</span>
-            <span className="text-slate-500 font-medium">{currentDateStr}</span>
+            <span className="text-slate-500">{currentDateStr}</span>
           </div>
         </div>
 
-        {/* Right: Live Clock & Action Pill & Notification Trigger */}
+        {/* Right: Status, Clock, Role & Notifications */}
         <div className="flex items-center space-x-2">
-          {/* Full Screen Mode Toggle for Laptop/Projector */}
-          {onToggleFullScreen && (
+          {/* Mode Offline / Blankspot Status Pill */}
+          {onOpenOfflineModal && (
             <button
-              onClick={onToggleFullScreen}
-              className={`p-2 rounded-xl border transition-all cursor-pointer shadow-2xs flex items-center justify-center ${
-                isFullScreen
-                  ? 'bg-indigo-600 text-white border-indigo-700 shadow-indigo-600/20'
-                  : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200/80'
+              onClick={onOpenOfflineModal}
+              className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors cursor-pointer ${
+                !isOnline || isManualBlankspot
+                  ? 'bg-amber-50 text-amber-900 border-amber-200'
+                  : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-200'
               }`}
-              title={isFullScreen ? 'Keluar dari Mode Layar Penuh' : 'Mode Layar Penuh (F11 Fullscreen)'}
+              title={
+                !isOnline || isManualBlankspot
+                  ? 'Mode Blankspot (Offline) Aktif. Klik untuk opsi sinkronisasi.'
+                  : 'Status: Online'
+              }
             >
-              {isFullScreen ? (
-                <Minimize2 className="w-4 h-4" />
-              ) : (
-                <Maximize2 className="w-4 h-4" />
+              <span
+                className={`w-1.5 h-1.5 rounded-full ${
+                  !isOnline || isManualBlankspot ? 'bg-amber-500' : 'bg-emerald-500'
+                }`}
+              />
+              <span className="hidden sm:inline">
+                {!isOnline || isManualBlankspot ? 'Mode Blankspot' : 'Online'}
+              </span>
+              <span className="sm:hidden">
+                {!isOnline || isManualBlankspot ? 'Offline' : 'Online'}
+              </span>
+              {pendingOfflineCount > 0 && (
+                <span className="px-1.5 py-0.2 rounded text-[10px] font-mono font-medium bg-amber-100 text-amber-900">
+                  {pendingOfflineCount}
+                </span>
               )}
-            </button>
-          )}
-
-          {/* Role Indicator Badge */}
-          <div
-            className={`hidden lg:flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-extrabold border ${
-              userRole === 'kepala_sekolah'
-                ? 'bg-amber-500 text-slate-950 border-amber-400 font-black'
-                : userRole === 'admin'
-                ? 'bg-blue-600 text-white border-blue-700'
-                : userRole === 'bkd_staff' || userRole === 'bkd'
-                ? 'bg-emerald-600 text-white border-emerald-700'
-                : 'bg-indigo-600 text-white border-indigo-700'
-            }`}
-          >
-            {userRole === 'kepala_sekolah' ? (
-              <Building2 className="w-3.5 h-3.5 text-slate-950" />
-            ) : userRole === 'bkd_staff' || userRole === 'bkd' ? (
-              <Building2 className="w-3.5 h-3.5 text-white" />
-            ) : userRole === 'admin' ? (
-              <ShieldCheck className="w-3.5 h-3.5 text-blue-200" />
-            ) : (
-              <FileCheck2 className="w-3.5 h-3.5 text-indigo-200" />
-            )}
-            <span>
-              {userRole === 'kepala_sekolah'
-                ? 'Mode: Kepala Sekolah'
-                : userRole === 'admin'
-                ? 'Mode: Admin SIMPEG'
-                : userRole === 'bkd_staff' || userRole === 'bkd'
-                ? 'Mode: Auditor BKD'
-                : 'Mode: Guru / GTK'}
-            </span>
-          </div>
-
-          {/* Live Clock Pill */}
-          <div className="hidden md:flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-slate-900 text-white text-xs font-mono font-bold shadow-xs">
-            <Clock className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
-            <span>{currentTime}</span>
-          </div>
-
-          {/* Install / Download App Button */}
-          {onOpenInstallModal && (
-            <button
-              onClick={onOpenInstallModal}
-              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white text-xs font-extrabold shadow-2xs transition-all cursor-pointer"
-              title="Unduh & Pasang Aplikasi di HP atau Laptop (PWA)"
-            >
-              <HardDrive className="w-3.5 h-3.5 text-indigo-200" />
-              <span className="hidden sm:inline">Unduh / Pasang App</span>
-              <span className="sm:hidden">App</span>
             </button>
           )}
 
@@ -213,40 +188,44 @@ export const NotificationBanner: React.FC<NotificationBannerProps> = ({
           {pendingLeaves.length > 0 && (
             <button
               onClick={() => setActiveTab('layanan_gtk')}
-              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-bold hover:bg-rose-100 transition-colors cursor-pointer animate-pulse"
+              className="flex items-center space-x-1.5 px-2.5 py-1 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs font-medium hover:bg-rose-100 transition-colors cursor-pointer"
+              title="Tinjau izin guru/GTK yang menunggu persetujuan"
             >
-              <Bell className="w-3.5 h-3.5" />
-              <span>{pendingLeaves.length} Izin GTK Perlu Ditinjau</span>
+              <Bell className="w-3.5 h-3.5 text-rose-500" />
+              <span>{pendingLeaves.length} Izin</span>
             </button>
           )}
 
-          {/* Quick Daily Backup Button */}
-          {onOpenBackupPrompt && (
-            <button
-              onClick={onOpenBackupPrompt}
-              className="hidden sm:flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs font-bold hover:bg-amber-100 transition-all cursor-pointer shadow-2xs"
-              title="Cadangkan seluruh data presensi harian ke file JSON"
-            >
-              <HardDrive className="w-3.5 h-3.5 text-amber-600" />
-              <span>Backup Harian</span>
-            </button>
-          )}
+          {/* Live Clock */}
+          <div className="hidden md:flex items-center space-x-1.5 px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-slate-600 text-xs font-mono">
+            <Clock className="w-3.5 h-3.5 text-slate-400" />
+            <span>{currentTime}</span>
+          </div>
+
+          {/* Role Indicator Badge */}
+          <div className="hidden lg:flex items-center space-x-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border border-slate-200 bg-slate-50 text-slate-700">
+            <span>
+              {userRole === 'kepala_sekolah'
+                ? 'Kepala Sekolah'
+                : userRole === 'admin'
+                ? 'Admin'
+                : userRole === 'bkd_staff' || userRole === 'bkd'
+                ? 'Auditor BKD'
+                : 'Guru / GTK'}
+            </span>
+          </div>
 
           {/* Notification Center Trigger Bell */}
           <div className="relative">
             <button
               id="header-notification-center-btn"
               onClick={() => setIsNotifDropdownOpen((prev) => !prev)}
-              className={`relative p-2 rounded-xl border transition-all cursor-pointer shadow-2xs flex items-center justify-center ${
-                notifications.length > 0
-                  ? 'bg-amber-50 hover:bg-amber-100 text-amber-700 border-amber-200'
-                  : 'bg-slate-50 hover:bg-slate-100 text-slate-600 border-slate-200/80'
-              }`}
-              title="Pusat Notifikasi Presensi & Izin"
+              className="relative p-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 transition-colors cursor-pointer flex items-center justify-center"
+              title="Notifikasi"
             >
               <Bell className="w-4 h-4" />
               {notifications.length > 0 ? (
-                <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-rose-600 text-white text-[10px] font-bold flex items-center justify-center animate-pulse">
+                <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-slate-900 text-white text-[10px] font-medium flex items-center justify-center">
                   {notifications.length}
                 </span>
               ) : (
@@ -256,12 +235,12 @@ export const NotificationBanner: React.FC<NotificationBannerProps> = ({
 
             {/* Notification Dropdown Popover */}
             {isNotifDropdownOpen && (
-              <div className="absolute right-0 mt-2 w-80 sm:w-96 bg-white rounded-2xl shadow-2xl border border-slate-200 z-50 overflow-hidden animate-fadeIn">
-                <div className="p-3.5 bg-slate-900 text-white flex items-center justify-between">
+              <div className="absolute right-0 mt-2 w-80 sm:w-96 bg-white rounded-xl shadow-lg border border-slate-200 z-50 overflow-hidden">
+                <div className="p-3 bg-slate-900 text-white flex items-center justify-between">
                   <div className="flex items-center space-x-2">
-                    <Bell className="w-4 h-4 text-amber-400" />
-                    <h4 className="text-xs font-bold tracking-wide uppercase">
-                      Pusat Notifikasi ({notifications.length})
+                    <Bell className="w-4 h-4 text-slate-300" />
+                    <h4 className="text-xs font-medium tracking-wide">
+                      Notifikasi ({notifications.length})
                     </h4>
                   </div>
                   <div className="flex items-center space-x-1">
@@ -270,7 +249,7 @@ export const NotificationBanner: React.FC<NotificationBannerProps> = ({
                         onClick={() => {
                           onClearAllNotifications();
                         }}
-                        className="px-2 py-1 bg-slate-800 hover:bg-rose-900/60 text-slate-300 hover:text-rose-200 rounded-lg text-[10px] font-bold flex items-center space-x-1 transition-colors"
+                        className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-[10px] font-medium flex items-center space-x-1 transition-colors"
                         title="Kosongkan semua notifikasi"
                       >
                         <Trash2 className="w-3 h-3" />
@@ -279,7 +258,7 @@ export const NotificationBanner: React.FC<NotificationBannerProps> = ({
                     )}
                     <button
                       onClick={() => setIsNotifDropdownOpen(false)}
-                      className="text-slate-400 hover:text-white p-1 rounded-lg"
+                      className="text-slate-400 hover:text-white p-1 rounded"
                     >
                       <X className="w-4 h-4" />
                     </button>
@@ -289,12 +268,12 @@ export const NotificationBanner: React.FC<NotificationBannerProps> = ({
                 <div className="max-h-80 overflow-y-auto divide-y divide-slate-100">
                   {notifications.length === 0 ? (
                     <div className="p-8 text-center">
-                      <Info className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-                      <p className="text-xs font-bold text-slate-700">
-                        Belum Pernah Melakukan Absensi / Tidak Ada Notifikasi
+                      <Info className="w-7 h-7 text-slate-300 mx-auto mb-2" />
+                      <p className="text-xs font-medium text-slate-700">
+                        Tidak Ada Notifikasi
                       </p>
                       <p className="text-[11px] text-slate-400 mt-1 max-w-xs mx-auto leading-relaxed">
-                        Data notifikasi saat ini kosong. Notifikasi kehadiran atau permohonan izin akan muncul secara otomatis ketika presensi dilakukan.
+                        Data notifikasi saat ini kosong.
                       </p>
                     </div>
                   ) : (
@@ -333,17 +312,6 @@ export const NotificationBanner: React.FC<NotificationBannerProps> = ({
               </div>
             )}
           </div>
-
-          {/* Simulate Notification Button */}
-          <button
-            onClick={onTriggerSimulation}
-            className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-700 text-xs font-bold hover:bg-indigo-600 hover:text-white transition-all cursor-pointer shadow-2xs"
-            title="Klik untuk memicu simulasi notifikasi izin baru dari siswa/guru"
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Simulasi Notifikasi Izin</span>
-            <span className="sm:hidden">+Notifikasi</span>
-          </button>
         </div>
       </header>
 

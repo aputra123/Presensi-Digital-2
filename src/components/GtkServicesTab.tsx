@@ -21,6 +21,8 @@ import {
   ChevronRight,
   FileCheck,
   School,
+  RotateCcw,
+  Trash2,
 } from 'lucide-react';
 import {
   GtkServiceRequest,
@@ -40,6 +42,8 @@ interface GtkServicesTabProps {
   onApproveKepsek: (serviceId: string, note?: string) => void;
   onApproveAdmin: (serviceId: string, letterNumber?: string, note?: string) => void;
   onRejectService: (serviceId: string, reason: string) => void;
+  onReturnService?: (serviceId: string, reason: string) => void;
+  onDeleteService?: (serviceId: string) => void;
 }
 
 const CATEGORY_LABELS: Record<GtkServiceCategory, { label: string; color: string }> = {
@@ -59,6 +63,8 @@ export const GtkServicesTab: React.FC<GtkServicesTabProps> = ({
   onApproveKepsek,
   onApproveAdmin,
   onRejectService,
+  onReturnService,
+  onDeleteService,
 }) => {
   const safeServices = services || [];
   const safeTeachers = teachers || [];
@@ -83,6 +89,11 @@ export const GtkServicesTab: React.FC<GtkServicesTabProps> = ({
   // Approval review note
   const [reviewNote, setReviewNote] = useState('');
   const [letterNumberInput, setLetterNumberInput] = useState('');
+
+  // Inline action state for Reject, Return & Delete without prompt/confirm
+  const [actionModalType, setActionModalType] = useState<'return' | 'reject' | null>(null);
+  const [actionReason, setActionReason] = useState('');
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const filteredServices = safeServices.filter((s) => {
     const matchQuery =
@@ -168,11 +179,19 @@ export const GtkServicesTab: React.FC<GtkServicesTabProps> = ({
         </span>
       );
     }
+    if (s.status === 'returned') {
+      return (
+        <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-[10px] font-extrabold bg-amber-100 text-amber-800 border border-amber-200">
+          <RotateCcw className="w-3 h-3 text-amber-600" />
+          <span>Dikembalikan (Revisi)</span>
+        </span>
+      );
+    }
     if (s.status === 'rejected') {
       return (
         <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-[10px] font-extrabold bg-rose-100 text-rose-800 border border-rose-200">
           <XCircle className="w-3 h-3 text-rose-600" />
-          <span>Ditolak / Dikembalikan</span>
+          <span>Ditolak</span>
         </span>
       );
     }
@@ -277,6 +296,7 @@ export const GtkServicesTab: React.FC<GtkServicesTabProps> = ({
             <option value="pending">Menunggu Persetujuan</option>
             <option value="approved_by_kepsek">Disetujui Kepsek Saja</option>
             <option value="approved">Disetujui Penuh (Resmi)</option>
+            <option value="returned">Dikembalikan (Perlu Perbaikan)</option>
             <option value="rejected">Ditolak</option>
           </select>
         </div>
@@ -354,6 +374,13 @@ export const GtkServicesTab: React.FC<GtkServicesTabProps> = ({
                             </span>
                             <span className="text-[9px] font-bold text-rose-700 mt-1">Ditolak</span>
                           </div>
+                        ) : req.kepsekApproval?.status === 'returned' ? (
+                          <div className="inline-flex flex-col items-center">
+                            <span className="p-1 rounded-full bg-amber-100 text-amber-700">
+                              <RotateCcw className="w-4 h-4" />
+                            </span>
+                            <span className="text-[9px] font-bold text-amber-700 mt-1">Dikembalikan</span>
+                          </div>
                         ) : (
                           <div className="inline-flex flex-col items-center">
                             <span className="p-1 rounded-full bg-amber-100 text-amber-700">
@@ -380,6 +407,13 @@ export const GtkServicesTab: React.FC<GtkServicesTabProps> = ({
                             </span>
                             <span className="text-[9px] font-bold text-rose-700 mt-1">Ditolak</span>
                           </div>
+                        ) : req.adminApproval?.status === 'returned' ? (
+                          <div className="inline-flex flex-col items-center">
+                            <span className="p-1 rounded-full bg-amber-100 text-amber-700">
+                              <RotateCcw className="w-4 h-4" />
+                            </span>
+                            <span className="text-[9px] font-bold text-amber-700 mt-1">Dikembalikan</span>
+                          </div>
                         ) : (
                           <div className="inline-flex flex-col items-center">
                             <span className="p-1 rounded-full bg-amber-100 text-amber-700">
@@ -396,14 +430,32 @@ export const GtkServicesTab: React.FC<GtkServicesTabProps> = ({
                       </td>
 
                       {/* Actions */}
-                      <td className="px-5 py-4 align-top text-right space-x-1">
+                      <td className="px-5 py-4 align-top text-right space-x-1.5 whitespace-nowrap">
                         <button
-                          onClick={() => setSelectedService(req)}
+                          onClick={() => {
+                            setSelectedService(req);
+                            setActionModalType(null);
+                            setShowDeleteConfirm(false);
+                            setReviewNote(req.kepsekApproval?.note || req.adminApproval?.note || '');
+                            setLetterNumberInput(req.officialLetterNumber || '');
+                          }}
                           className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-900 hover:text-white text-slate-700 font-bold text-[11px] transition-all cursor-pointer inline-flex items-center space-x-1"
                         >
                           <FileText className="w-3 h-3" />
                           <span>Tinjau</span>
                         </button>
+                        {onDeleteService && (
+                          <button
+                            onClick={() => {
+                              setSelectedService(req);
+                              setShowDeleteConfirm(true);
+                            }}
+                            className="p-1.5 rounded-xl bg-rose-50 hover:bg-rose-600 hover:text-white text-rose-600 transition-all cursor-pointer inline-flex items-center"
+                            title="Hapus Pengajuan"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </td>
                     </tr>
                   );
@@ -469,6 +521,30 @@ export const GtkServicesTab: React.FC<GtkServicesTabProps> = ({
                 <p className="text-slate-700 mt-0.5 leading-relaxed">{selectedService.purpose}</p>
               </div>
 
+              {selectedService.status === 'returned' && (
+                <div className="col-span-2 bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-start space-x-2">
+                  <RotateCcw className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
+                  <div>
+                    <span className="text-xs font-bold text-amber-900 block">Berkas Dikembalikan untuk Perbaikan</span>
+                    <p className="text-[11px] text-amber-800 mt-0.5">
+                      {selectedService.kepsekApproval?.note || selectedService.adminApproval?.note || 'Mohon melengkapi berkas persyaratan atau merevisi data pengajuan.'}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {selectedService.status === 'rejected' && (
+                <div className="col-span-2 bg-rose-50 border border-rose-200 rounded-xl p-3 flex items-start space-x-2">
+                  <XCircle className="w-4 h-4 text-rose-600 mt-0.5 shrink-0" />
+                  <div>
+                    <span className="text-xs font-bold text-rose-900 block">Permohonan Layanan Ditolak</span>
+                    <p className="text-[11px] text-rose-800 mt-0.5">
+                      {selectedService.kepsekApproval?.note || selectedService.adminApproval?.note || 'Permohonan tidak dapat disetujui.'}
+                    </p>
+                  </div>
+                </div>
+              )}
+
               {selectedService.officialLetterNumber && (
                 <div className="col-span-2 bg-indigo-100/50 p-2.5 rounded-xl border border-indigo-200">
                   <span className="text-[10px] font-bold text-indigo-800 block">Nomor Surat Resmi Sekolah:</span>
@@ -491,9 +567,19 @@ export const GtkServicesTab: React.FC<GtkServicesTabProps> = ({
                   <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
                     selectedService.kepsekApproval?.status === 'approved'
                       ? 'bg-emerald-100 text-emerald-800'
-                      : 'bg-amber-100 text-amber-800'
+                      : selectedService.kepsekApproval?.status === 'rejected'
+                      ? 'bg-rose-100 text-rose-800'
+                      : selectedService.kepsekApproval?.status === 'returned'
+                      ? 'bg-amber-100 text-amber-800'
+                      : 'bg-slate-100 text-slate-800'
                   }`}>
-                    {selectedService.kepsekApproval?.status === 'approved' ? 'Disetujui' : 'Menunggu'}
+                    {selectedService.kepsekApproval?.status === 'approved'
+                      ? 'Disetujui'
+                      : selectedService.kepsekApproval?.status === 'rejected'
+                      ? 'Ditolak'
+                      : selectedService.kepsekApproval?.status === 'returned'
+                      ? 'Dikembalikan'
+                      : 'Menunggu'}
                   </span>
                 </div>
                 <p className="text-[11px] font-bold text-slate-800">
@@ -521,9 +607,19 @@ export const GtkServicesTab: React.FC<GtkServicesTabProps> = ({
                   <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
                     selectedService.adminApproval?.status === 'approved'
                       ? 'bg-emerald-100 text-emerald-800'
-                      : 'bg-amber-100 text-amber-800'
+                      : selectedService.adminApproval?.status === 'rejected'
+                      ? 'bg-rose-100 text-rose-800'
+                      : selectedService.adminApproval?.status === 'returned'
+                      ? 'bg-amber-100 text-amber-800'
+                      : 'bg-slate-100 text-slate-800'
                   }`}>
-                    {selectedService.adminApproval?.status === 'approved' ? 'Disetujui' : 'Menunggu'}
+                    {selectedService.adminApproval?.status === 'approved'
+                      ? 'Disetujui'
+                      : selectedService.adminApproval?.status === 'rejected'
+                      ? 'Ditolak'
+                      : selectedService.adminApproval?.status === 'returned'
+                      ? 'Dikembalikan'
+                      : 'Menunggu'}
                   </span>
                 </div>
                 <p className="text-[11px] font-bold text-slate-800">
@@ -617,23 +713,222 @@ export const GtkServicesTab: React.FC<GtkServicesTabProps> = ({
                   </button>
                 )}
 
+                {/* Tombol Kembalikan Berkas */}
                 <button
+                  id="btn-return-service-trigger"
+                  type="button"
                   onClick={() => {
-                    const reason = prompt('Masukkan alasan penolakan / pengembalian berkas:');
-                    if (reason) {
-                      onRejectService(selectedService.id, reason);
-                      setSelectedService(null);
-                    }
+                    setActionModalType('return');
+                    setShowDeleteConfirm(false);
+                    setActionReason(reviewNote || '');
                   }}
-                  className="px-3.5 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-xs border border-rose-200 cursor-pointer"
+                  className="px-3.5 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-800 font-bold text-xs border border-amber-300 flex items-center space-x-1.5 cursor-pointer transition-colors"
                 >
-                  Tolak / Kembalikan
+                  <RotateCcw className="w-3.5 h-3.5 text-amber-600" />
+                  <span>Kembalikan Berkas</span>
+                </button>
+
+                {/* Tombol Tolak Permohonan */}
+                <button
+                  id="btn-reject-service-trigger"
+                  type="button"
+                  onClick={() => {
+                    setActionModalType('reject');
+                    setShowDeleteConfirm(false);
+                    setActionReason(reviewNote || '');
+                  }}
+                  className="px-3.5 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-xs border border-rose-300 flex items-center space-x-1.5 cursor-pointer transition-colors"
+                >
+                  <XCircle className="w-3.5 h-3.5 text-rose-600" />
+                  <span>Tolak Permohonan</span>
                 </button>
               </div>
             </div>
 
+            {/* Inline Kembalikan Berkas Panel */}
+            {actionModalType === 'return' && (
+              <div className="p-4 rounded-2xl bg-amber-50/90 border border-amber-200 space-y-3">
+                <div className="flex items-start justify-between">
+                  <div className="flex items-center space-x-2 text-amber-900 font-bold text-xs">
+                    <RotateCcw className="w-4 h-4 text-amber-600" />
+                    <span>Kembalikan Berkas Permohonan ke Pemohon (Revisi)</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setActionModalType(null)}
+                    className="text-amber-700 hover:text-amber-950 text-xs font-bold cursor-pointer"
+                  >
+                    ✕ Batal
+                  </button>
+                </div>
+                <p className="text-[11px] text-amber-800 leading-relaxed">
+                  Status permohonan akan diubah menjadi <strong>Dikembalikan (Revisi)</strong>. Guru / GTK terkait dapat melihat alasan perbaikan di sistem:
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    'Lampiran berkas / surat undangan belum lengkap',
+                    'Rentang tanggal pelaksanaan perlu disesuaikan',
+                    'Uraian maksud dinas perlu diperinci',
+                    'Jadwal bertabrakan dengan piket / KBM sekolah',
+                  ].map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => setActionReason(preset)}
+                      className="text-[10px] font-medium bg-white text-amber-900 border border-amber-200 rounded-lg px-2 py-1 hover:bg-amber-100/70 cursor-pointer"
+                    >
+                      + {preset}
+                    </button>
+                  ))}
+                </div>
+                <textarea
+                  value={actionReason}
+                  onChange={(e) => setActionReason(e.target.value)}
+                  placeholder="Tuliskan catatan perbaikan berkas..."
+                  rows={2}
+                  className="w-full text-xs p-2.5 bg-white border border-amber-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-400"
+                />
+                <div className="flex justify-end space-x-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setActionModalType(null)}
+                    className="px-3.5 py-1.5 rounded-xl bg-white border border-slate-200 text-slate-700 text-xs font-bold hover:bg-slate-50 cursor-pointer"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    id="btn-confirm-return-service"
+                    type="button"
+                    onClick={() => {
+                      const finalReason = actionReason.trim() || 'Berkas dikembalikan untuk perbaikan kelengkapan persyaratan.';
+                      if (onReturnService) {
+                        onReturnService(selectedService.id, finalReason);
+                      } else {
+                        onRejectService(selectedService.id, `[DIKEMBALIKAN] ${finalReason}`);
+                      }
+                      playBeepSound();
+                      setActionModalType(null);
+                      setSelectedService(null);
+                    }}
+                    className="px-4 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-xs cursor-pointer flex items-center space-x-1"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>Konfirmasi Kembalikan Berkas</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Inline Tolak Permohonan Panel */}
+            {actionModalType === 'reject' && (
+              <div className="p-4 rounded-2xl bg-rose-50/90 border border-rose-200 space-y-3">
+                <div className="flex items-start justify-between">
+                  <div className="flex items-center space-x-2 text-rose-900 font-bold text-xs">
+                    <XCircle className="w-4 h-4 text-rose-600" />
+                    <span>Tolak Permohonan Layanan GTK</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setActionModalType(null)}
+                    className="text-rose-700 hover:text-rose-950 text-xs font-bold cursor-pointer"
+                  >
+                    ✕ Batal
+                  </button>
+                </div>
+                <p className="text-[11px] text-rose-800 leading-relaxed">
+                  Status permohonan akan diubah menjadi <strong>Ditolak</strong> secara resmi. Masukkan alasan penolakan:
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    'Bertabrakan dengan agenda prioritas sekolah',
+                    'Tidak memenuhi kriteria perizinan dinas luar',
+                    'Kuota tugas dinas GTK telah melampaui batas',
+                    'Kegiatan tidak berhubungan dengan tupoksi GTK',
+                  ].map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => setActionReason(preset)}
+                      className="text-[10px] font-medium bg-white text-rose-900 border border-rose-200 rounded-lg px-2 py-1 hover:bg-rose-100/70 cursor-pointer"
+                    >
+                      + {preset}
+                    </button>
+                  ))}
+                </div>
+                <textarea
+                  value={actionReason}
+                  onChange={(e) => setActionReason(e.target.value)}
+                  placeholder="Tuliskan alasan penolakan resmi..."
+                  rows={2}
+                  className="w-full text-xs p-2.5 bg-white border border-rose-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-rose-400"
+                />
+                <div className="flex justify-end space-x-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setActionModalType(null)}
+                    className="px-3.5 py-1.5 rounded-xl bg-white border border-slate-200 text-slate-700 text-xs font-bold hover:bg-slate-50 cursor-pointer"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    id="btn-confirm-reject-service"
+                    type="button"
+                    onClick={() => {
+                      const finalReason = actionReason.trim() || 'Permohonan ditolak oleh pejabat berwenang.';
+                      onRejectService(selectedService.id, finalReason);
+                      playBeepSound();
+                      setActionModalType(null);
+                      setSelectedService(null);
+                    }}
+                    className="px-4 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-xs cursor-pointer flex items-center space-x-1"
+                  >
+                    <XCircle className="w-3.5 h-3.5" />
+                    <span>Konfirmasi Tolak Permohonan</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Inline Konfirmasi Hapus Pengajuan */}
+            {showDeleteConfirm && (
+              <div className="p-4 rounded-2xl bg-rose-50 border-2 border-rose-300 space-y-3">
+                <div className="flex items-center space-x-2 text-rose-900 font-bold text-xs">
+                  <AlertCircle className="w-5 h-5 text-rose-600 shrink-0" />
+                  <span className="font-extrabold text-sm">Konfirmasi Hapus Pengajuan Layanan GTK</span>
+                </div>
+                <p className="text-xs text-rose-800 leading-relaxed">
+                  Apakah Anda yakin ingin menghapus pengajuan <strong>"{selectedService.title}"</strong> ({selectedService.teacherName}) secara permanen? Data riwayat disposisi & berkas akan dihapus.
+                </p>
+                <div className="flex justify-end space-x-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setShowDeleteConfirm(false)}
+                    className="px-3.5 py-1.5 rounded-xl bg-white border border-slate-200 text-slate-700 text-xs font-bold hover:bg-slate-50 cursor-pointer"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    id="btn-confirm-delete-service"
+                    type="button"
+                    onClick={() => {
+                      if (onDeleteService) {
+                        onDeleteService(selectedService.id);
+                      }
+                      playBeepSound();
+                      setShowDeleteConfirm(false);
+                      setSelectedService(null);
+                    }}
+                    className="px-4 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-xs cursor-pointer flex items-center space-x-1.5"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Ya, Hapus Pengajuan</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Modal Bottom Actions */}
-            <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+            <div className="flex flex-wrap items-center justify-between gap-2.5 pt-3 border-t border-slate-100">
               <button
                 onClick={() => {
                   setIsPrintModalOpen(true);
@@ -644,12 +939,36 @@ export const GtkServicesTab: React.FC<GtkServicesTabProps> = ({
                 <span>Cetak Dokumen Resmi (Surat Tugas)</span>
               </button>
 
-              <button
-                onClick={() => setSelectedService(null)}
-                className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs cursor-pointer"
-              >
-                Tutup
-              </button>
+              <div className="flex items-center space-x-2">
+                {/* Tombol Hapus pada Pop Up Tinjau */}
+                {onDeleteService && (
+                  <button
+                    id="btn-delete-in-modal"
+                    type="button"
+                    onClick={() => {
+                      setShowDeleteConfirm(true);
+                      setActionModalType(null);
+                    }}
+                    className="px-3.5 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-xs border border-rose-200 flex items-center space-x-1.5 cursor-pointer transition-colors"
+                    title="Hapus Pengajuan Layanan GTK"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                    <span>Hapus Pengajuan</span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedService(null);
+                    setActionModalType(null);
+                    setShowDeleteConfirm(false);
+                  }}
+                  className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs cursor-pointer"
+                >
+                  Tutup
+                </button>
+              </div>
             </div>
           </div>
         </div>

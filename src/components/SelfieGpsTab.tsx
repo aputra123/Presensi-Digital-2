@@ -36,6 +36,7 @@ import {
 import { playBeepSound, checkDateIsHoliday } from '../utils/soundAndDate';
 import { CalendarOff, Lock, Unlock, Map, Navigation as NavIcon, LocateFixed } from 'lucide-react';
 import { GoogleMapsGeofence, calculateDistanceMeters } from './GoogleMapsGeofence';
+import { getResilientCameraStream, attachStreamToVideoElement } from '../utils/cameraStream';
 
 interface SelfieGpsTabProps {
   students?: Student[];
@@ -167,6 +168,7 @@ export const SelfieGpsTab: React.FC<SelfieGpsTabProps> = ({
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const simCleanupRef = useRef<(() => void) | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const scanIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -182,7 +184,7 @@ export const SelfieGpsTab: React.FC<SelfieGpsTabProps> = ({
     }
   }, [personType, teachers, students]);
 
-  // Start Camera Stream with MediaDevices API (specifically front-facing camera)
+  // Start Camera Stream with Resilient fallback (preventing black screen)
   const startCamera = async (targetFacing: 'user' | 'environment' = 'user') => {
     stopCamera();
     setIsCameraActive(true);
@@ -191,33 +193,16 @@ export const SelfieGpsTab: React.FC<SelfieGpsTabProps> = ({
     setFacingMode(targetFacing);
 
     try {
-      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        const constraints: MediaStreamConstraints = {
-          video: selectedDeviceId
-            ? { deviceId: { exact: selectedDeviceId }, width: { ideal: 1280 }, height: { ideal: 720 } }
-            : { facingMode: targetFacing, width: { ideal: 1280 }, height: { ideal: 720 } },
-          audio: false,
-        };
-
-        let stream: MediaStream;
-        try {
-          stream = await navigator.mediaDevices.getUserMedia(constraints);
-        } catch (strictErr) {
-          // Fallback to standard front camera
-          stream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: 'user' },
-            audio: false,
-          });
-        }
-
-        streamRef.current = stream;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          videoRef.current.play();
-        }
+      const res = await getResilientCameraStream(targetFacing, selectedDeviceId, 'selfie');
+      streamRef.current = res.stream;
+      if (res.cleanup) {
+        simCleanupRef.current = res.cleanup;
+      }
+      if (videoRef.current) {
+        attachStreamToVideoElement(videoRef.current, res.stream);
       }
     } catch (err: any) {
-      console.warn('Webcam permission not granted or unsupported:', err);
+      console.warn('Camera stream error:', err);
       setCameraError(err.message || 'Izin kamera tidak diberikan');
     }
   };
@@ -227,6 +212,10 @@ export const SelfieGpsTab: React.FC<SelfieGpsTabProps> = ({
       clearInterval(scanIntervalRef.current);
       scanIntervalRef.current = null;
     }
+    if (simCleanupRef.current) {
+      simCleanupRef.current();
+      simCleanupRef.current = null;
+    }
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
@@ -234,6 +223,12 @@ export const SelfieGpsTab: React.FC<SelfieGpsTabProps> = ({
     setIsCameraActive(false);
     setIsBiometricScanning(false);
   };
+
+  useEffect(() => {
+    if (isCameraActive && videoRef.current && streamRef.current) {
+      attachStreamToVideoElement(videoRef.current, streamRef.current);
+    }
+  }, [isCameraActive]);
 
   // Toggle between front and rear cameras
   const toggleFacingMode = () => {
@@ -953,7 +948,12 @@ Tercatat resmi dalam Sistem Informasi Kepegawaian & Database Presensi Sekolah.`;
               {isCameraActive && (
                 <div className="relative w-full h-full">
                   <video
-                    ref={videoRef}
+                    ref={(el) => {
+                      videoRef.current = el;
+                      if (el && streamRef.current) {
+                        attachStreamToVideoElement(el, streamRef.current);
+                      }
+                    }}
                     autoPlay
                     playsInline
                     muted

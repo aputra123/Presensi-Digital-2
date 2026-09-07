@@ -29,6 +29,10 @@ import {
   HardDrive,
   Trash2,
   Info,
+  Radio,
+  Wifi,
+  CloudOff,
+  Check,
 } from 'lucide-react';
 import { AttendanceRecord, SchoolClass, SchoolConfig, Student, Teacher } from '../types';
 import { formatDateIndo } from '../utils/soundAndDate';
@@ -52,6 +56,11 @@ interface RekapitulasiViewProps {
   students?: Student[];
   teachers?: Teacher[];
   userRole?: string;
+  isOnline?: boolean;
+  isManualBlankspot?: boolean;
+  pendingOfflineCount?: number;
+  onOpenOfflineModal?: () => void;
+  onSyncPendingRecords?: () => Promise<boolean>;
 }
 
 export const RekapitulasiView: React.FC<RekapitulasiViewProps> = ({
@@ -65,6 +74,11 @@ export const RekapitulasiView: React.FC<RekapitulasiViewProps> = ({
   students = [],
   teachers = [],
   userRole = 'admin',
+  isOnline = true,
+  isManualBlankspot = false,
+  pendingOfflineCount = 0,
+  onOpenOfflineModal,
+  onSyncPendingRecords,
 }) => {
   const safeRecords = records || [];
   const safeClasses = classes || [];
@@ -79,6 +93,7 @@ export const RekapitulasiView: React.FC<RekapitulasiViewProps> = ({
   const [selectedStatus, setSelectedStatus] = useState<string>('ALL'); // 'ALL' | 'hadir' | 'terlambat' | 'izin' | 'sakit' | 'alpa'
   const [selectedPersonType, setSelectedPersonType] = useState<string>('ALL'); // 'ALL' | 'student' | 'teacher' | 'PNS' | 'PPPK'
   const [selectedClass, setSelectedClass] = useState<string>('ALL');
+  const [selectedSyncStatus, setSelectedSyncStatus] = useState<string>('ALL'); // 'ALL' | 'pending_sync' | 'synced'
   const [exportMode, setExportMode] = useState<'bkd_separate' | 'standard'>('bkd_separate');
 
   // Sorting State - reactive across all fields
@@ -146,13 +161,20 @@ export const RekapitulasiView: React.FC<RekapitulasiViewProps> = ({
       const matchesClass =
         selectedClass === 'ALL' || rec.classOrSubject === selectedClass;
 
+      // 7. Sync Status Filter
+      const matchesSync =
+        selectedSyncStatus === 'ALL' ||
+        (selectedSyncStatus === 'pending_sync' && rec.syncStatus === 'pending_sync') ||
+        (selectedSyncStatus === 'synced' && rec.syncStatus !== 'pending_sync');
+
       return (
         matchesSearch &&
         matchesDate &&
         matchesSession &&
         matchesStatus &&
         matchesPerson &&
-        matchesClass
+        matchesClass &&
+        matchesSync
       );
     });
   }, [
@@ -166,6 +188,7 @@ export const RekapitulasiView: React.FC<RekapitulasiViewProps> = ({
     selectedStatus,
     selectedPersonType,
     selectedClass,
+    selectedSyncStatus,
   ]);
 
   // Reactive sorted records - immediately reflected in table and exports
@@ -600,6 +623,26 @@ export const RekapitulasiView: React.FC<RekapitulasiViewProps> = ({
             </button>
           </div>
 
+          {/* Kirim Presensi / Sinkronisasi Offline Button */}
+          {onOpenOfflineModal && (
+            <button
+              onClick={onOpenOfflineModal}
+              className={`px-3.5 py-2 rounded-2xl text-xs font-bold flex items-center space-x-1.5 transition-all cursor-pointer shadow-md ${
+                pendingOfflineCount > 0
+                  ? 'bg-amber-500 hover:bg-amber-600 text-slate-950 shadow-amber-500/30 animate-pulse'
+                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300'
+              }`}
+              title="Kelola antrean presensi offline wilayah blankspot dan kirim ke server"
+            >
+              <Radio className="w-4 h-4" />
+              <span>
+                {pendingOfflineCount > 0
+                  ? `Kirim Presensi (${pendingOfflineCount})`
+                  : 'Mode Offline'}
+              </span>
+            </button>
+          )}
+
           {/* Bulk Print Multi-Tanggal */}
           <button
             onClick={() => setIsBulkPrintOpen(true)}
@@ -689,6 +732,41 @@ export const RekapitulasiView: React.FC<RekapitulasiViewProps> = ({
           )}
         </div>
       </div>
+
+      {/* Offline Pending Sync Banner */}
+      {pendingOfflineCount > 0 && (
+        <div className="p-4 sm:p-5 bg-amber-500/10 border-2 border-amber-400/80 rounded-3xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs animate-in fade-in">
+          <div className="flex items-start sm:items-center space-x-3.5">
+            <div className="w-10 h-10 rounded-2xl bg-amber-500 text-slate-950 flex items-center justify-center shrink-0 shadow-xs">
+              <Radio className="w-5 h-5 animate-pulse" />
+            </div>
+            <div>
+              <div className="flex items-center space-x-2 flex-wrap gap-y-1">
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-600 text-white">
+                  {pendingOfflineCount} PRESENSI DALAM ANTREAN OFFLINE
+                </span>
+                <span className="font-extrabold text-xs sm:text-sm text-amber-950">
+                  Data Presensi Dicatat Saat Jaringan Terputus / Wilayah Blankspot
+                </span>
+              </div>
+              <p className="text-xs text-amber-900 mt-1">
+                Presensi aman tersimpan di memori lokal perangkat ini. Anda dapat langsung mengirim seluruh absensi ke server cloud, mengunduh file Excel/CSV, atau mengirim rekap via WhatsApp BKD/Dinas.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center space-x-2 shrink-0 self-start sm:self-auto">
+            {onOpenOfflineModal && (
+              <button
+                onClick={onOpenOfflineModal}
+                className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-2xl text-xs font-black flex items-center space-x-2 transition-all shadow-xs cursor-pointer"
+              >
+                <Send className="w-4 h-4" />
+                <span>Kirim & Sinkronkan Sekarang</span>
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Empty State Top Alert Banner if no attendance has ever been recorded */}
       {safeRecords.length === 0 && (
@@ -805,7 +883,7 @@ export const RekapitulasiView: React.FC<RekapitulasiViewProps> = ({
         )}
 
         {/* Row 3: Dropdown Category Filters */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2 border-t border-slate-100 text-xs">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 pt-2 border-t border-slate-100 text-xs">
           {/* Status Kehadiran Filter */}
           <div className="space-y-1">
             <label className="font-bold text-slate-600 text-[11px]">Kategori Status Kehadiran</label>
@@ -869,6 +947,23 @@ export const RekapitulasiView: React.FC<RekapitulasiViewProps> = ({
                   {c.name}
                 </option>
               ))}
+            </select>
+          </div>
+
+          {/* Status Jaringan & Sinkronisasi */}
+          <div className="space-y-1">
+            <label className="font-bold text-slate-600 text-[11px] flex items-center space-x-1">
+              <Radio className="w-3 h-3 text-amber-500" />
+              <span>Status Sinkronisasi</span>
+            </label>
+            <select
+              value={selectedSyncStatus}
+              onChange={(e) => setSelectedSyncStatus(e.target.value)}
+              className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl font-semibold text-slate-800 focus:bg-white focus:ring-2 focus:ring-indigo-500"
+            >
+              <option value="ALL">Semua (Online & Offline)</option>
+              <option value="pending_sync">⚡ Antrean Offline ({pendingOfflineCount})</option>
+              <option value="synced">✓ Sudah Sinkron Server</option>
             </select>
           </div>
         </div>
@@ -981,6 +1076,7 @@ export const RekapitulasiView: React.FC<RekapitulasiViewProps> = ({
                 </th>
 
                 <th className="py-3.5">Metode & Lokasi</th>
+                <th className="py-3.5">Sinkronisasi</th>
                 <th className="py-3.5 pr-5">Catatan</th>
               </tr>
             </thead>
@@ -1046,6 +1142,19 @@ export const RekapitulasiView: React.FC<RekapitulasiViewProps> = ({
                         {rec.location?.address || 'Terverifikasi'}
                       </span>
                     </div>
+                  </td>
+                  <td className="py-3.5">
+                    {rec.syncStatus === 'pending_sync' ? (
+                      <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md text-[10px] font-black bg-amber-100 text-amber-900 border border-amber-300 shadow-2xs">
+                        <CloudOff className="w-3 h-3 text-amber-700 shrink-0" />
+                        <span>Antrean Offline</span>
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                        <Check className="w-3 h-3 text-emerald-600 shrink-0" />
+                        <span>Tersinkron</span>
+                      </span>
+                    )}
                   </td>
                   <td className="py-3.5 pr-5 text-slate-500 text-[11px] max-w-[180px] truncate">
                     {rec.note || '-'}

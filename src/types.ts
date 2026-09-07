@@ -68,8 +68,16 @@ export interface AttendanceRecord {
   method: AttendanceMethod;
   note?: string;
   photoUrl?: string;
+  signature?: string; // base64 PNG dataUrl
+  signatureIn?: string;
+  signatureOut?: string;
+  signatureInTime?: string;
+  signatureOutTime?: string;
   location?: AttendanceLocation;
   employmentStatus?: EmploymentStatus;
+  syncStatus?: 'pending_sync' | 'synced';
+  isOfflineRecord?: boolean;
+  syncedAt?: string;
 }
 
 export interface LeaveRequest {
@@ -100,7 +108,7 @@ export type GtkServiceCategory =
 export interface GtkApprovalDetail {
   approvedBy: string; // Nama Pejabat / Admin
   role: 'kepala_sekolah' | 'admin';
-  status: 'pending' | 'approved' | 'rejected';
+  status: 'pending' | 'approved' | 'rejected' | 'returned';
   timestamp?: string;
   signatureStamp?: string; // Tanda Tangan / Stempel Digital
   note?: string;
@@ -120,7 +128,7 @@ export interface GtkServiceRequest {
   destinationOrLocation?: string; // Lokasi tugas dinas / instansi tujuan
   attachmentName?: string;
   attachmentUrl?: string;
-  status: 'pending' | 'approved_by_kepsek' | 'approved_by_admin' | 'approved' | 'rejected';
+  status: 'pending' | 'approved_by_kepsek' | 'approved_by_admin' | 'approved' | 'rejected' | 'returned';
   kepsekApproval: GtkApprovalDetail;
   adminApproval: GtkApprovalDetail;
   createdAt: string;
@@ -172,6 +180,24 @@ export interface SchoolConfig {
   livenessThreshold?: number; // Biometric sensitivity threshold (0.0 to 1.0)
   googleMapsApiKey?: string; // Optional custom Google Maps API key
   defaultMapEngine?: 'google_maps' | 'leaflet';
+  gtkLetterNumberFormat?: string;
+  gtkLetterLastNumber?: number;
+  googleDriveFolderId?: string;
+}
+
+export interface SignatureAuditLog {
+  id: string;
+  tableDate: string;
+  teacherId: string;
+  teacherName: string;
+  nip: string;
+  sessionType: 'masuk' | 'pulang' | 'keterangan';
+  action: 'create_signature' | 'update_signature' | 'clear_signature' | 'update_status';
+  previousValue?: string;
+  newValue?: string;
+  timestamp: string;
+  performer: string;
+  notes?: string;
 }
 
 export interface ApelDocumentation {
@@ -321,6 +347,29 @@ export interface GoogleSheetsImportResult {
   details?: string;
 }
 
+export type AsnAttendanceStatus =
+  | 'hadir'
+  | 'izin'
+  | 'sakit'
+  | 'cuti'
+  | 'dinas_luar'
+  | 'tanpa_keterangan';
+
+export interface AsnAttendanceRow {
+  teacherId: string;
+  name: string;
+  nip: string;
+  employmentStatus: EmploymentStatus;
+  subjectOrRole: string;
+  signatureIn?: string; // base64 PNG dataUrl
+  signatureInTime?: string; // e.g. "06:45:12"
+  signatureOut?: string; // base64 PNG dataUrl
+  signatureOutTime?: string; // e.g. "15:30:22"
+  status: AsnAttendanceStatus;
+  notes?: string;
+  updatedAt?: string;
+}
+
 export type ActiveTab =
   | 'dashboard'
   | 'scan'
@@ -328,6 +377,7 @@ export type ActiveTab =
   | 'apel_documentation'
   | 'biometric_logs'
   | 'duty_roster'
+  | 'tabel_absensi_asn'
   | 'batch_class'
   | 'rekap'
   | 'bkd_automation'

@@ -192,9 +192,39 @@ export const playSuccessChime = () => {
 };
 
 /**
- * Downloads data as a clean, UTF-8 CSV with Excel BOM
+ * Downloads data as a clean, UTF-8 CSV with Excel BOM.
+ * Supports both (filename, csvString) and (headers, rows, filename) signatures.
  */
-export const downloadCsv = (filename: string, csvContent: string) => {
+export const downloadCsv = (
+  arg1: string | string[],
+  arg2: string | (string | number)[][],
+  arg3?: string
+) => {
+  let filename = 'export.csv';
+  let csvContent = '';
+
+  if (Array.isArray(arg1) && Array.isArray(arg2) && typeof arg3 === 'string') {
+    // Called as downloadCsv(headers, rows, filename)
+    filename = arg3;
+    const escapeCsv = (val: string | number | undefined | null) =>
+      `"${String(val ?? '').replace(/"/g, '""')}"`;
+    const headerRow = arg1.map(escapeCsv).join(',');
+    const bodyRows = arg2.map((row) => row.map(escapeCsv).join(',')).join('\n');
+    csvContent = `${headerRow}\n${bodyRows}`;
+  } else if (typeof arg1 === 'string' && typeof arg2 === 'string') {
+    // Called as downloadCsv(filename, csvContent)
+    filename = arg1;
+    csvContent = arg2;
+  } else if (typeof arg1 === 'string' && Array.isArray(arg2)) {
+    // Called as downloadCsv(filename, rows)
+    filename = arg1;
+    const escapeCsv = (val: string | number | undefined | null) =>
+      `"${String(val ?? '').replace(/"/g, '""')}"`;
+    csvContent = arg2
+      .map((row) => (Array.isArray(row) ? row.map(escapeCsv).join(',') : String(row)))
+      .join('\n');
+  }
+
   const bom = '\uFEFF'; // UTF-8 Byte Order Mark for Excel
   const blob = new Blob([bom + csvContent], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);

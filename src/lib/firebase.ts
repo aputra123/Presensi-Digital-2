@@ -15,6 +15,7 @@ import {
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { AppBackupData, BackupSummary } from '../types';
+import { sanitizeObject, sanitizeName, sanitizeNip, sanitizeReason } from '../utils/sanitizer';
 
 // Initialize Firebase App singleton
 export const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
@@ -71,24 +72,25 @@ export const saveBackupToFirestore = async (
   backupData: AppBackupData
 ): Promise<{ success: boolean; id: string; timestamp: string; message: string }> => {
   try {
-    const backupId = backupData.id || `backup_${Date.now()}`;
+    const cleanData = sanitizeObject(backupData);
+    const backupId = cleanData.id || `backup_${Date.now()}`;
     const cleanId = backupId.replace(/[^a-zA-Z0-9_\-]/g, '_');
     const backupRef = doc(db, 'backups', cleanId);
 
-    // Save full snapshot
+    // Save full snapshot with sanitized payload
     const payload = {
       id: cleanId,
-      timestamp: backupData.timestamp,
-      createdDate: backupData.createdDate,
-      createdTime: backupData.createdTime || new Date().toLocaleTimeString('id-ID'),
-      source: backupData.source || 'Manual Web Admin Backup',
-      totalRecords: backupData.totalRecords || backupData.records?.length || 0,
-      totalStudents: backupData.totalStudents || backupData.students?.length || 0,
-      totalTeachers: backupData.totalTeachers || backupData.teachers?.length || 0,
-      totalClasses: backupData.totalClasses || backupData.classes?.length || 0,
-      totalLeaves: backupData.totalLeaves || backupData.leaves?.length || 0,
-      totalGtkServices: backupData.totalGtkServices || backupData.gtkServices?.length || 0,
-      backupData: JSON.stringify(backupData),
+      timestamp: cleanData.timestamp,
+      createdDate: cleanData.createdDate,
+      createdTime: cleanData.createdTime || new Date().toLocaleTimeString('id-ID'),
+      source: cleanData.source || 'Manual Web Admin Backup',
+      totalRecords: cleanData.totalRecords || cleanData.records?.length || 0,
+      totalStudents: cleanData.totalStudents || cleanData.students?.length || 0,
+      totalTeachers: cleanData.totalTeachers || cleanData.teachers?.length || 0,
+      totalClasses: cleanData.totalClasses || cleanData.classes?.length || 0,
+      totalLeaves: cleanData.totalLeaves || cleanData.leaves?.length || 0,
+      totalGtkServices: cleanData.totalGtkServices || cleanData.gtkServices?.length || 0,
+      backupData: JSON.stringify(cleanData),
     };
 
     await withTimeout(setDoc(backupRef, payload), 7000);
