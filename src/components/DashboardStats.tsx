@@ -77,6 +77,7 @@ import { PrincipalDailyDigestModal } from './PrincipalDailyDigestModal';
 import { BiometricHealthCard } from './BiometricHealthCard';
 import { AttendanceMilestoneCard } from './AttendanceMilestoneCard';
 import { AttendanceHealthGauge } from './AttendanceHealthGauge';
+import { LocalStorageSyncStatsCard } from './LocalStorageSyncStatsCard';
 import { BiometricLog } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -98,6 +99,11 @@ interface DashboardStatsProps {
   onApproveLeave?: (leaveId: string) => void;
   onRejectLeave?: (leaveId: string) => void;
   onAddNotification?: (notif: any) => void;
+  isOnline?: boolean;
+  isManualBlankspot?: boolean;
+  pendingOfflineCount?: number;
+  onOpenOfflineModal?: () => void;
+  onSyncPendingRecords?: () => Promise<boolean> | void;
 }
 
 export type TimeRangeFilter = 'today' | 'week' | 'month' | 'semester';
@@ -120,6 +126,11 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
   onApproveLeave,
   onRejectLeave,
   onAddNotification,
+  isOnline = true,
+  isManualBlankspot = false,
+  pendingOfflineCount = 0,
+  onOpenOfflineModal,
+  onSyncPendingRecords,
 }) => {
   const [timeRange, setTimeRange] = useState<TimeRangeFilter>('week');
   const [chartView, setChartView] = useState<
@@ -1295,6 +1306,17 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
           {/* SECTION 1: RINGKASAN MINIMALIS (DEFAULT VIEW) */}
           {activeDashboardTab === 'ringkasan' && (
         <div className="space-y-4">
+          {/* Visualisasi Statistik Buffer Penyimpanan Lokal & Antrean Pending Sync */}
+          <LocalStorageSyncStatsCard
+            records={safeRecords}
+            isOnline={isOnline}
+            isManualBlankspot={isManualBlankspot}
+            onOpenOfflineModal={onOpenOfflineModal}
+            onSyncPendingRecords={onSyncPendingRecords}
+            onAddNotification={onAddNotification}
+            config={config}
+          />
+
           {/* 4 Clean Metric Cards */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
             {/* Metric 1: Kehadiran Hari Ini */}

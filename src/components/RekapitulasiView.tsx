@@ -1234,6 +1234,7 @@ export const RekapitulasiView: React.FC<RekapitulasiViewProps> = ({
           onClose={() => setIsInternalPrintOpen(false)}
           config={config}
           records={displayRecords}
+          allRecords={safeRecords}
           students={students}
           teachers={teachers}
           todayDate={todayStr}

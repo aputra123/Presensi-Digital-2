@@ -1601,6 +1601,11 @@ export default function App() {
                 })
               }
               onAddNotification={handleAddNotification}
+              isOnline={isOnline}
+              isManualBlankspot={isManualBlankspot}
+              pendingOfflineCount={pendingOfflineCount}
+              onOpenOfflineModal={() => setIsOfflineModalOpen(true)}
+              onSyncPendingRecords={handleSyncPendingRecords}
             />
           )}
 
@@ -1940,8 +1945,10 @@ export default function App() {
             onClose={() => setPrintModalState({ isOpen: false })}
             config={config}
             records={printModalState.records || records}
+            allRecords={records}
             students={students}
             teachers={teachers}
+            classes={classes}
             todayDate={todayDate}
             dateRangeLabel={printModalState.dateRangeLabel}
             customTitle={printModalState.customTitle}
