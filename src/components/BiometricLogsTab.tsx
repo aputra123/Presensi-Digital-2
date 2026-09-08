@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
+import { motion } from 'motion/react';
 import {
   ShieldCheck,
   ShieldAlert,
@@ -105,7 +106,7 @@ export const BiometricLogsTab: React.FC<BiometricLogsTabProps> = ({
   const handleAdd = onAddBiometricLog || onAddLog;
 
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'verified' | 'failed' | 'flagged' | 'suspicious'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'success' | 'verified' | 'failed' | 'flagged' | 'suspicious'>('all');
   const [severityFilter, setSeverityFilter] = useState<'all' | 'info' | 'warning' | 'error'>('all');
   const [personTypeFilter, setPersonTypeFilter] = useState<'all' | 'teacher' | 'student'>('all');
   const [selectedTimelineHour, setSelectedTimelineHour] = useState<number | null>(null);
@@ -357,6 +358,56 @@ export const BiometricLogsTab: React.FC<BiometricLogsTabProps> = ({
     return warnings;
   }, [normalizedLogs]);
 
+  // Set of log IDs that match the 3-consecutive-failure anomaly pattern (within 5 minutes)
+  const highRiskAnomalyLogIds = useMemo(() => {
+    const userAttempts: Record<string, BiometricLog[]> = {};
+
+    normalizedLogs.forEach((log) => {
+      const pid = log.personId || log.identifier || log.personName;
+      if (!pid) return;
+      if (!userAttempts[pid]) userAttempts[pid] = [];
+      userAttempts[pid].push(log);
+    });
+
+    const highRiskSet = new Set<string>();
+
+    Object.values(userAttempts).forEach((list) => {
+      const sorted = [...list].sort(
+        (a, b) =>
+          new Date(`${a.date} ${a.time}`).getTime() -
+          new Date(`${b.date} ${b.time}`).getTime()
+      );
+
+      let consecutiveFails: BiometricLog[] = [];
+
+      for (let i = 0; i < sorted.length; i++) {
+        const item = sorted[i];
+        const isFail = item.status === 'failed' || item.severity === 'error';
+
+        if (isFail) {
+          consecutiveFails.push(item);
+          if (consecutiveFails.length >= 3) {
+            const latestTime = new Date(
+              `${consecutiveFails[consecutiveFails.length - 1].date} ${consecutiveFails[consecutiveFails.length - 1].time}`
+            ).getTime();
+            const thirdLastTime = new Date(
+              `${consecutiveFails[consecutiveFails.length - 3].date} ${consecutiveFails[consecutiveFails.length - 3].time}`
+            ).getTime();
+            const diffMinutes = (latestTime - thirdLastTime) / (1000 * 60);
+
+            if (diffMinutes <= 5) {
+              consecutiveFails.forEach((l) => highRiskSet.add(l.id));
+            }
+          }
+        } else {
+          consecutiveFails = [];
+        }
+      }
+    });
+
+    return highRiskSet;
+  }, [normalizedLogs]);
+
   // 30-Day Activity Visualization Data
   const chartData = useMemo(() => {
     const daysMap: Record<string, { date: string; displayDate: string; verified: number; failed: number; suspicious: number; total: number }> = {};
@@ -408,6 +459,12 @@ export const BiometricLogsTab: React.FC<BiometricLogsTabProps> = ({
       let matchStatus = true;
       if (statusFilter === 'all') {
         matchStatus = true;
+      } else if (statusFilter === 'success' || statusFilter === 'verified') {
+        matchStatus = log.status === 'verified';
+      } else if (statusFilter === 'failed') {
+        matchStatus = log.status === 'failed' || log.severity === 'error' || !log.livenessPassed || !log.gpsPassed;
+      } else if (statusFilter === 'flagged') {
+        matchStatus = log.status === 'flagged' || log.severity === 'warning';
       } else if (statusFilter === 'suspicious') {
         matchStatus = log.isSuspicious === true;
       } else {
@@ -463,12 +520,20 @@ export const BiometricLogsTab: React.FC<BiometricLogsTabProps> = ({
     };
   }, [hoveredUser, normalizedLogs]);
 
-  // Multi-Select Handlers
+  // Multi-Select & Bulk Actions
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
       setSelectedIds(filteredLogs.map((l) => l.id));
     } else {
       setSelectedIds([]);
+    }
+  };
+
+  const handleToggleBulkSelectAll = () => {
+    if (selectedIds.length > 0 && selectedIds.length === filteredLogs.length) {
+      setSelectedIds([]);
+    } else {
+      setSelectedIds(filteredLogs.map((l) => l.id));
     }
   };
 
@@ -498,10 +563,13 @@ export const BiometricLogsTab: React.FC<BiometricLogsTabProps> = ({
 
   const handleBulkDelete = () => {
     if (!onUpdateLogs || selectedIds.length === 0) return;
-    if (window.confirm(`Hapus ${selectedIds.length} log biometrik yang dipilih secara permanen?`)) {
+    const count = selectedIds.length;
+    if (window.confirm(`Hapus ${count} log biometrik yang dipilih secara permanen? Data yang telah dihapus tidak dapat dipulihkan.`)) {
       const updated = normalizedLogs.filter((log) => !selectedIds.includes(log.id));
       onUpdateLogs(updated);
       setSelectedIds([]);
+      setArchiveSuccessMsg(`Berhasil menghapus ${count} log biometrik yang dipilih.`);
+      setTimeout(() => setArchiveSuccessMsg(null), 4000);
     }
   };
 
@@ -564,21 +632,26 @@ export const BiometricLogsTab: React.FC<BiometricLogsTabProps> = ({
     }
   };
 
-  // Export to standard CSV with GPS & Liveness forensic metadata
-  const handleExportCSV = () => {
+  // Export to CSV button handler: formats biometric logs (all or filtered), including timestamps and failure reasons for external reporting
+  const handleExportCSV = (exportAll = false) => {
+    const logsToExport = exportAll ? normalizedLogs : (filteredLogs.length > 0 ? filteredLogs : normalizedLogs);
+
     const headers = [
       'ID Log',
+      'Timestamp Lengkap (WITA)',
+      'Tanggal (YYYY-MM-DD)',
       'Waktu (WITA)',
-      'Tanggal',
+      'Status Verifikasi',
       'Tingkat Urgensi (Severity)',
+      'Indikasi High-Risk (3x Gagal Beruntun)',
+      'Indikasi Mass-Spoofing',
       'Nama Pengguna',
       'NIP/NISN',
-      'Kategori',
-      'Kelas/Mapel',
-      'Status Verifikasi',
-      'Indikasi Mass-Spoofing',
-      'Skor Kemiripan (%)',
-      'Ambang Batas Liveness / Match Threshold (%)',
+      'Kategori Pengguna',
+      'Kelas / Mapel',
+      'Alasan Kegagalan (Failure Reason)',
+      'Skor Kemiripan Wajah (%)',
+      'Ambang Batas Kepercayaan Biometrik (%)',
       'Hasil Uji Liveness Sensor',
       'Status GPS Geofence',
       'Jarak GPS Aktual (Meter)',
@@ -587,42 +660,57 @@ export const BiometricLogsTab: React.FC<BiometricLogsTabProps> = ({
       'Koordinat Pusat Sekolah Target',
       'Batas Radius Geofence (Meter)',
       'Arah Kamera',
-      'Perangkat / IP',
-      'Alasan Kegagalan / Keterangan',
-      'Catatan Forensik / Anomali',
+      'Perangkat / IP Address',
+      'Catatan Forensik & Anomali Sistem',
     ];
 
     const schoolTargetCoord = config ? `"${config.schoolLat}, ${config.schoolLng}"` : '"-1.8485, 124.4682"';
     const schoolMaxRadius = config?.maxRadiusMeters || 80;
+    const currentThreshold = config?.biometricConfidenceThreshold ? Math.round(config.biometricConfidenceThreshold * 100) : 75;
 
-    const rows = filteredLogs.map((l) => [
-      l.id,
-      l.time,
-      l.date,
-      (l.severity || 'info').toUpperCase(),
-      `"${(l.personName || '').replace(/"/g, '""')}"`,
-      `'${l.identifier || ''}`,
-      l.personType === 'teacher' ? 'Guru/GTK' : 'Siswa',
-      `"${(l.classOrSubject || '').replace(/"/g, '""')}"`,
-      l.status.toUpperCase(),
-      l.isSuspicious ? 'YA (SPOOF)' : 'TIDAK',
-      l.matchScore,
-      l.threshold || 80,
-      l.livenessPassed ? 'Lolos (Liveness Valid)' : 'Gagal (Liveness Tidak Terpenuhi)',
-      l.gpsPassed ? 'Dalam Radius' : 'Luar Radius',
-      l.distanceMeter,
-      l.latitude !== undefined ? l.latitude : '-',
-      l.longitude !== undefined ? l.longitude : '-',
-      schoolTargetCoord,
-      schoolMaxRadius,
-      l.cameraFacing === 'user' ? 'Kamera Depan' : 'Kamera Belakang',
-      `"${(l.ipOrDevice || '-').replace(/"/g, '""')}"`,
-      `"${(l.failureReason || 'Verifikasi Biometrik Valid').replace(/"/g, '""')}"`,
-      `"${(l.suspiciousReason || '-').replace(/"/g, '""')}"`,
-    ]);
+    const rows = logsToExport.map((l) => {
+      const isHighRisk = highRiskAnomalyLogIds.has(l.id);
+      const fullTimestamp = l.timestamp || `${l.date} ${l.time} WITA`;
+      const failureReasonText = l.failureReason
+        ? l.failureReason
+        : (l.status === 'failed' || l.severity === 'error')
+        ? 'Otentikasi biometrik gagal (skor di bawah ambang batas atau sensor tidak terpenuhi)'
+        : 'Verifikasi biometrik valid dan terverifikasi';
 
-    const csvBody = [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
-    downloadCsv(`Biometric_Logs_Forensik_SMPN4_Taliabu_${startDate ? startDate + '_sd_' + (endDate || todayStr) : todayStr}`, csvBody);
+      return [
+        l.id,
+        `"${fullTimestamp}"`,
+        l.date,
+        l.time,
+        l.status.toUpperCase(),
+        (l.severity || 'info').toUpperCase(),
+        isHighRisk ? 'YA (3X GAGAL BERUNTUN)' : 'TIDAK',
+        l.isSuspicious ? 'YA (SPOOF)' : 'TIDAK',
+        `"${(l.personName || '').replace(/"/g, '""')}"`,
+        `'${l.identifier || ''}`,
+        l.personType === 'teacher' ? 'Guru/GTK' : 'Siswa',
+        `"${(l.classOrSubject || '').replace(/"/g, '""')}"`,
+        `"${failureReasonText.replace(/"/g, '""')}"`,
+        l.matchScore,
+        l.threshold || currentThreshold,
+        l.livenessPassed ? 'Lolos (Liveness Valid)' : 'Gagal (Liveness Tidak Terpenuhi)',
+        l.gpsPassed ? 'Dalam Radius' : 'Luar Radius',
+        l.distanceMeter,
+        l.latitude !== undefined ? l.latitude : '-',
+        l.longitude !== undefined ? l.longitude : '-',
+        schoolTargetCoord,
+        schoolMaxRadius,
+        l.cameraFacing === 'user' ? 'Kamera Depan' : 'Kamera Belakang',
+        `"${(l.ipOrDevice || l.ipAddress || '-').replace(/"/g, '""')}"`,
+        `"${(l.suspiciousReason || '-').replace(/"/g, '""')}"`,
+      ];
+    });
+
+    const csvBody = '\uFEFF' + [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
+    downloadCsv(
+      `Biometric_Logs_Export_${exportAll ? 'Semua' : 'Filtered'}_SMPN4_Taliabu_${startDate ? `${startDate}_sd_${endDate || todayStr}` : todayStr}`,
+      csvBody
+    );
   };
 
   // Specialized Incident Report Export (PDF & CSV)
@@ -1018,12 +1106,13 @@ export const BiometricLogsTab: React.FC<BiometricLogsTabProps> = ({
             </button>
 
             <button
-              onClick={handleExportCSV}
-              className="px-3.5 py-2.5 bg-slate-800/90 hover:bg-slate-700 text-white text-xs font-bold rounded-2xl border border-slate-700 flex items-center space-x-2 transition-all cursor-pointer shadow-sm"
-              title="Unduh Data Log Biometrik sebagai CSV"
+              id="export-to-csv-header-btn"
+              onClick={() => handleExportCSV(false)}
+              className="px-3.5 py-2.5 bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-bold rounded-2xl border border-emerald-500/30 flex items-center space-x-2 transition-all cursor-pointer shadow-md"
+              title="Unduh Data Log Biometrik Lengkap sebagai CSV (Export to CSV)"
             >
-              <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
-              <span>Ekspor Semua CSV</span>
+              <FileSpreadsheet className="w-4 h-4 text-emerald-200" />
+              <span>Export to CSV</span>
             </button>
 
             <button
@@ -1448,16 +1537,58 @@ export const BiometricLogsTab: React.FC<BiometricLogsTabProps> = ({
 
       {/* Biometric Logs Table with Checkboxes, Severity Tag, and Quick User Profile Hover */}
       <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs overflow-hidden relative">
-        <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+        <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center space-x-2">
             <ShieldCheck className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
             <h3 className="font-extrabold text-sm text-slate-900 dark:text-white">
               Riwayat Upaya Otentikasi Biometrik ({filteredLogs.length})
             </h3>
           </div>
-          <span className="text-[11px] text-slate-400 font-mono">
-            Klik baris untuk audit rincian & peta GPS
-          </span>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Bulk Select Button */}
+            <button
+              id="bulk-select-btn"
+              onClick={handleToggleBulkSelectAll}
+              className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-bold flex items-center space-x-1.5 transition-colors cursor-pointer"
+              title="Pilih atau batalkan semua baris log yang sedang difilter"
+            >
+              <CheckSquare className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+              <span>{selectedIds.length > 0 && selectedIds.length === filteredLogs.length ? 'Batal Pilih Semua' : 'Bulk Select'}</span>
+              {selectedIds.length > 0 && (
+                <span className="px-1.5 py-0.5 rounded-full bg-indigo-600 text-white text-[10px] font-mono">
+                  {selectedIds.length}
+                </span>
+              )}
+            </button>
+
+            {/* Delete Selected Button */}
+            <button
+              id="delete-selected-btn"
+              onClick={handleBulkDelete}
+              disabled={selectedIds.length === 0}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center space-x-1.5 transition-all ${
+                selectedIds.length > 0
+                  ? 'bg-rose-600 hover:bg-rose-700 text-white shadow-sm cursor-pointer'
+                  : 'bg-slate-100 dark:bg-slate-800/80 text-slate-400 dark:text-slate-600 cursor-not-allowed'
+              }`}
+              title={selectedIds.length > 0 ? `Hapus ${selectedIds.length} log terpilih` : 'Pilih log terlebih dahulu untuk menghapus'}
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Delete Selected {selectedIds.length > 0 ? `(${selectedIds.length})` : ''}</span>
+            </button>
+
+            {/* Export to CSV Button */}
+            <button
+              id="export-to-csv-table-btn"
+              onClick={() => handleExportCSV(false)}
+              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center space-x-1.5 transition-colors shadow-sm cursor-pointer"
+              title="Ekspor data log biometrik yang ditampilkan ke format CSV"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5" />
+              <span>Export to CSV</span>
+            </button>
+          </div>
         </div>
 
         {filteredLogs.length === 0 ? (
@@ -1498,16 +1629,40 @@ export const BiometricLogsTab: React.FC<BiometricLogsTabProps> = ({
                   const isFailed = log.status === 'failed' || log.severity === 'error' || !log.livenessPassed || !log.gpsPassed;
                   const isSuspicious = log.isSuspicious === true;
                   const isSelected = selectedIds.includes(log.id);
+                  const isHighRisk = highRiskAnomalyLogIds.has(log.id);
 
                   return (
-                    <tr
+                    <motion.tr
                       key={log.id}
+                      id={`biometric-row-${log.id}`}
                       onClick={() => setSelectedLog(log)}
-                      className={`cursor-pointer transition-all duration-300 ${
-                        isSuspicious
+                      animate={
+                        isHighRisk
+                          ? {
+                              boxShadow: [
+                                'inset 0 0 0 2px rgba(239, 68, 68, 0.4), 0 0 0px rgba(239, 68, 68, 0)',
+                                'inset 0 0 0 2px rgba(239, 68, 68, 1), 0 0 12px 2px rgba(239, 68, 68, 0.5)',
+                                'inset 0 0 0 2px rgba(239, 68, 68, 0.4), 0 0 0px rgba(239, 68, 68, 0)',
+                              ],
+                            }
+                          : {}
+                      }
+                      transition={
+                        isHighRisk
+                          ? {
+                              duration: 2,
+                              repeat: Infinity,
+                              ease: 'easeInOut',
+                            }
+                          : undefined
+                      }
+                      className={`cursor-pointer transition-colors duration-200 relative ${
+                        isHighRisk
+                          ? 'bg-rose-50/95 hover:bg-rose-100 dark:bg-rose-950/40 dark:hover:bg-rose-950/60'
+                          : isSuspicious
                           ? 'bg-purple-50/90 hover:bg-purple-100 dark:bg-purple-950/40 dark:hover:bg-purple-950/60 border-l-4 border-l-purple-600 ring-1 ring-purple-400/40'
                           : isFailed
-                          ? 'bg-rose-50/90 hover:bg-rose-100 dark:bg-rose-950/30 dark:hover:bg-rose-950/50 border-l-4 border-l-rose-600 ring-1 ring-rose-400/50 shadow-xs animate-[pulse_3s_ease-in-out_infinite]'
+                          ? 'bg-rose-50/80 hover:bg-rose-100 dark:bg-rose-950/30 dark:hover:bg-rose-950/50 border-l-4 border-l-rose-500'
                           : 'hover:bg-slate-50/80 dark:hover:bg-slate-800/40'
                       } ${isSelected ? 'bg-indigo-50/80 dark:bg-indigo-950/30' : ''}`}
                     >
@@ -1530,13 +1685,23 @@ export const BiometricLogsTab: React.FC<BiometricLogsTabProps> = ({
                       {/* Severity Tag & Suspicious Flag */}
                       <td className="py-3.5 px-4 whitespace-nowrap">
                         <div className="flex flex-col space-y-1 items-start">
+                          {isHighRisk && (
+                            <motion.span
+                              animate={{ scale: [1, 1.04, 1], opacity: [0.95, 1, 0.95] }}
+                              transition={{ duration: 1.5, repeat: Infinity, ease: 'easeInOut' }}
+                              className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md text-[10px] font-black uppercase bg-red-600 text-white border border-red-400 shadow-xs"
+                            >
+                              <AlertOctagon className="w-3 h-3 text-white animate-spin" />
+                              <span>🚨 High-Risk (3x Gagal)</span>
+                            </motion.span>
+                          )}
                           {isSuspicious && (
                             <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-black uppercase bg-purple-100 dark:bg-purple-900 text-purple-900 dark:text-purple-200 border border-purple-300 dark:border-purple-700 animate-pulse">
                               🚨 Suspicious Spoof
                             </span>
                           )}
                           {isFailed ? (
-                            <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md text-[10px] font-black uppercase bg-rose-100 dark:bg-rose-900/70 text-rose-700 dark:text-rose-200 border border-rose-300 dark:border-rose-700 animate-pulse">
+                            <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md text-[10px] font-black uppercase bg-rose-100 dark:bg-rose-900/70 text-rose-700 dark:text-rose-200 border border-rose-300 dark:border-rose-700">
                               <span className="w-1.5 h-1.5 rounded-full bg-rose-600 animate-ping"></span>
                               <span>🔴 Error / Anomali</span>
                             </span>
@@ -1702,7 +1867,7 @@ export const BiometricLogsTab: React.FC<BiometricLogsTabProps> = ({
                           <span>Audit</span>
                         </button>
                       </td>
-                    </tr>
+                    </motion.tr>
                   );
                 })}
               </tbody>
@@ -1752,11 +1917,13 @@ export const BiometricLogsTab: React.FC<BiometricLogsTabProps> = ({
               Set Gagal
             </button>
             <button
+              id="floating-delete-selected-btn"
               onClick={handleBulkDelete}
-              className="px-3 py-1.5 bg-slate-800 hover:bg-rose-900/80 text-rose-300 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center space-x-1"
+              className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 shadow-xs"
+              title="Hapus semua log yang dipilih secara permanen"
             >
               <Trash2 className="w-3.5 h-3.5" />
-              <span>Hapus</span>
+              <span>Delete Selected ({selectedIds.length})</span>
             </button>
             <button
               onClick={() => setSelectedIds([])}

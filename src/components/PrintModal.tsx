@@ -24,6 +24,7 @@ import {
   Teacher,
   AsnAttendanceRow,
   AsnAttendanceStatus,
+  ApelDocumentation,
 } from '../types';
 import { formatDateIndo } from '../utils/soundAndDate';
 
@@ -34,6 +35,8 @@ interface PrintModalProps {
   students?: Student[];
   teachers?: Teacher[];
   asnRows?: AsnAttendanceRow[];
+  apelPagiDoc?: ApelDocumentation | null;
+  apelSiangDoc?: ApelDocumentation | null;
   todayDate?: string;
   dateRangeLabel?: string;
   customTitle?: string;
@@ -47,6 +50,8 @@ export const PrintModal: React.FC<PrintModalProps> = ({
   students = [],
   teachers: _teachers = [],
   asnRows = [],
+  apelPagiDoc = null,
+  apelSiangDoc = null,
   todayDate = new Date().toISOString().split('T')[0],
   dateRangeLabel,
   customTitle,
@@ -652,6 +657,108 @@ export const PrintModal: React.FC<PrintModalProps> = ({
                   )}
                 </tbody>
               </table>
+            </div>
+          )}
+
+          {/* LAMPIRAN DOKUMENTASI APEL PAGI & APEL SIANG ASN (UNTUK PENGIRIMAN BUKTI TERPADU) */}
+          {(apelPagiDoc || apelSiangDoc) && (
+            <div className="mt-6 pt-4 border-t-2 border-slate-800 print-avoid-break">
+              <div className="text-center mb-3">
+                <h4 className="font-extrabold text-xs uppercase tracking-wider text-slate-900">
+                  LAMPIRAN DOKUMENTASI RESMI APEL PAGI DAN APEL SIANG ASN
+                </h4>
+                <p className="text-[10px] text-slate-600 italic">
+                  Bukti Fisik Pelaksanaan Apel Kedisiplinan Pegawai ASN (PNS & PPPK) — Dinas Pendidikan & Kebudayaan
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                {/* 1. Dokumentasi Apel Pagi */}
+                <div className="border border-slate-400 rounded-xl p-3 bg-white space-y-2">
+                  <div className="flex items-center justify-between pb-1.5 border-b border-slate-200">
+                    <span className="font-black text-[11px] text-slate-900 uppercase tracking-wide">
+                      1. Dokumentasi Apel Pagi ASN
+                    </span>
+                    <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200">
+                      {apelPagiDoc?.time || '07:15 WITA'}
+                    </span>
+                  </div>
+
+                  {apelPagiDoc?.photoUrl ? (
+                    <div className="aspect-[4/3] rounded-lg overflow-hidden border border-slate-300 bg-slate-950 flex items-center justify-center">
+                      <img
+                        src={apelPagiDoc.photoUrl}
+                        alt="Bukti Apel Pagi"
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
+                  ) : (
+                    <div className="aspect-[4/3] rounded-lg border-2 border-dashed border-slate-300 flex items-center justify-center text-slate-400 text-[10px] text-center p-4">
+                      Belum ada foto dokumentasi apel pagi terlampir.
+                    </div>
+                  )}
+
+                  <div className="text-[10px] space-y-1 text-slate-700 font-sans">
+                    <p>
+                      <strong>Pembina Apel:</strong> {apelPagiDoc?.leaderName || config.principalName || 'Drs. Ruslan La Ode, M.Pd.'}
+                    </p>
+                    <p>
+                      <strong>Lokasi / Titik:</strong> {apelPagiDoc?.placeName || 'Lapangan Utama Upacara Sekolah'}
+                    </p>
+                    <p>
+                      <strong>Peserta ASN Hadir:</strong> {apelPagiDoc?.attendanceCount ?? 'Lengkap'} Pegawai
+                    </p>
+                    {apelPagiDoc?.notes && (
+                      <p className="italic text-slate-600 bg-slate-50 p-1.5 rounded border border-slate-200 text-[9.5px]">
+                        "{apelPagiDoc.notes}"
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                {/* 2. Dokumentasi Apel Siang */}
+                <div className="border border-slate-400 rounded-xl p-3 bg-white space-y-2">
+                  <div className="flex items-center justify-between pb-1.5 border-b border-slate-200">
+                    <span className="font-black text-[11px] text-slate-900 uppercase tracking-wide">
+                      2. Dokumentasi Apel Siang ASN
+                    </span>
+                    <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                      {apelSiangDoc?.time || '13:45 WITA'}
+                    </span>
+                  </div>
+
+                  {apelSiangDoc?.photoUrl ? (
+                    <div className="aspect-[4/3] rounded-lg overflow-hidden border border-slate-300 bg-slate-950 flex items-center justify-center">
+                      <img
+                        src={apelSiangDoc.photoUrl}
+                        alt="Bukti Apel Siang"
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
+                  ) : (
+                    <div className="aspect-[4/3] rounded-lg border-2 border-dashed border-slate-300 flex items-center justify-center text-slate-400 text-[10px] text-center p-4">
+                      Belum ada foto dokumentasi apel siang terlampir.
+                    </div>
+                  )}
+
+                  <div className="text-[10px] space-y-1 text-slate-700 font-sans">
+                    <p>
+                      <strong>Pembina Apel:</strong> {apelSiangDoc?.leaderName || config.adminName || 'Dra. Hj. Siti Aminah, M.Pd.'}
+                    </p>
+                    <p>
+                      <strong>Lokasi / Titik:</strong> {apelSiangDoc?.placeName || 'Halaman Depan Kantor Guru'}
+                    </p>
+                    <p>
+                      <strong>Peserta ASN Hadir:</strong> {apelSiangDoc?.attendanceCount ?? 'Lengkap'} Pegawai
+                    </p>
+                    {apelSiangDoc?.notes && (
+                      <p className="italic text-slate-600 bg-slate-50 p-1.5 rounded border border-slate-200 text-[9.5px]">
+                        "{apelSiangDoc.notes}"
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
             </div>
           )}
 

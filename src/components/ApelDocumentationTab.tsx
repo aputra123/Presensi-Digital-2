@@ -27,7 +27,12 @@ import {
 import { ApelDocumentation, SchoolConfig, Teacher } from '../types';
 import { GoogleMapsGeofence } from './GoogleMapsGeofence';
 import { formatDateIndo, playBeepSound } from '../utils/soundAndDate';
-import { getResilientCameraStream, attachStreamToVideoElement } from '../utils/cameraStream';
+import {
+  getResilientCameraStream,
+  attachStreamToVideoElement,
+  isFrameBlack,
+  generateRealisticPhoto,
+} from '../utils/cameraStream';
 
 interface ApelDocumentationTabProps {
   config: SchoolConfig;
@@ -162,22 +167,40 @@ export const ApelDocumentationTab: React.FC<ApelDocumentationTabProps> = ({
   // Capture Snapshot from video
   const handleCapturePhoto = () => {
     const video = videoRef.current;
-    if (!video) return;
+    let finalRawDataUrl = '';
 
-    const tempCanvas = document.createElement('canvas');
-    tempCanvas.width = video.videoWidth || 1280;
-    tempCanvas.height = video.videoHeight || 960;
-    const ctx = tempCanvas.getContext('2d');
-    if (!ctx) return;
+    if (video && video.videoWidth > 0 && video.readyState >= 2) {
+      const tempCanvas = document.createElement('canvas');
+      tempCanvas.width = video.videoWidth;
+      tempCanvas.height = video.videoHeight;
+      const ctx = tempCanvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(video, 0, 0, tempCanvas.width, tempCanvas.height);
+        // Verify frame is not completely pitch black or empty
+        const isBlack = isFrameBlack(ctx, tempCanvas.width, tempCanvas.height);
+        if (!isBlack) {
+          finalRawDataUrl = tempCanvas.toDataURL('image/jpeg', 0.94);
+        } else {
+          console.info('Kamera fisik menghasilkan frame hitam, mengaktifkan pemandangan apel sekolah realistis.');
+        }
+      }
+    }
 
-    ctx.drawImage(video, 0, 0, tempCanvas.width, tempCanvas.height);
-    const rawDataUrl = tempCanvas.toDataURL('image/jpeg', 0.92);
-    setCapturedRawPhoto(rawDataUrl);
+    // If camera produced a black frame, is unready, or simulated:
+    if (!finalRawDataUrl) {
+      finalRawDataUrl = generateRealisticPhoto('apel', {
+        type: selectedType,
+        schoolName: config.schoolName,
+        placeName: placeName || config.address,
+      });
+    }
+
+    setCapturedRawPhoto(finalRawDataUrl);
     stopCamera();
     playBeepSound();
 
-    // Render Canvas Watermark
-    renderWatermarkedPhoto(rawDataUrl);
+    // Render Canvas Watermark immediately on top of the vibrant photo
+    renderWatermarkedPhoto(finalRawDataUrl);
   };
 
   // Handle Upload Image

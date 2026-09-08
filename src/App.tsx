@@ -560,9 +560,39 @@ export default function App() {
     });
   }, []);
 
-  // Biometric Logs Handler with Anomaly Hook Trigger
+  // Biometric Logs Handler with Custom Confidence Threshold Validation & Anomaly Hook Trigger
   const handleAddBiometricLog = useCallback((newLog: BiometricLog) => {
     const cleanLog = sanitizeObject(newLog);
+
+    // Evaluate log validity using custom biometric confidence threshold (0.0 to 1.0)
+    const customThreshold = typeof config?.biometricConfidenceThreshold === 'number'
+      ? config.biometricConfidenceThreshold
+      : 0.75;
+    const thresholdPercent = Math.round(customThreshold * 100);
+
+    // Normalize matchScore to 0.0 - 1.0 scale
+    const rawScore = typeof cleanLog.matchScore === 'number' ? cleanLog.matchScore : 0;
+    const normalizedScore = rawScore > 1 ? rawScore / 100 : rawScore;
+
+    // Stamp current evaluated threshold onto the log record
+    cleanLog.threshold = thresholdPercent;
+
+    // Evaluate log validity against custom biometric confidence threshold
+    if (normalizedScore < customThreshold) {
+      cleanLog.status = 'failed';
+      cleanLog.severity = 'error';
+      cleanLog.failureReason =
+        cleanLog.failureReason ||
+        `Skor kecocokan wajah (${(normalizedScore * 100).toFixed(0)}%) di bawah ambang batas kepercayaan biometrik sistem (${thresholdPercent}%).`;
+    } else if (cleanLog.livenessPassed !== false && cleanLog.gpsPassed !== false) {
+      // If score meets threshold and no sensor failures, verify validity
+      if (cleanLog.status === 'failed' && (cleanLog.failureReason?.includes('ambang batas') || cleanLog.failureReason?.includes('Skor'))) {
+        cleanLog.status = 'verified';
+        cleanLog.severity = 'info';
+        cleanLog.failureReason = undefined;
+      }
+    }
+
     setBiometricLogs((prev) => {
       const updated = [cleanLog, ...prev];
       const pid = cleanLog.personId || cleanLog.identifier || cleanLog.personName;
@@ -583,7 +613,7 @@ export default function App() {
     }).catch((err) => {
       console.warn('Biometric log CSRF submission notice:', err);
     });
-  }, [checkBiometricConsecutiveFailures, session?.token]);
+  }, [checkBiometricConsecutiveFailures, session?.token, config?.biometricConfidenceThreshold]);
 
   // Duty Roster Handlers
   const handleAddOrUpdateDuty = (duty: DutyAssignment) => {

@@ -178,6 +178,7 @@ export interface SchoolConfig {
   adminName?: string;
   faceRecognitionMode?: boolean; // Real-time facial feature detection on/off for older devices
   livenessThreshold?: number; // Biometric sensitivity threshold (0.0 to 1.0)
+  biometricConfidenceThreshold?: number; // Custom biometric confidence threshold (0.0 to 1.0)
   googleMapsApiKey?: string; // Optional custom Google Maps API key
   defaultMapEngine?: 'google_maps' | 'leaflet';
   gtkLetterNumberFormat?: string;

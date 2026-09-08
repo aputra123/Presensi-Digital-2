@@ -36,7 +36,18 @@ import {
 import { playBeepSound, checkDateIsHoliday } from '../utils/soundAndDate';
 import { CalendarOff, Lock, Unlock, Map, Navigation as NavIcon, LocateFixed } from 'lucide-react';
 import { GoogleMapsGeofence, calculateDistanceMeters } from './GoogleMapsGeofence';
-import { getResilientCameraStream, attachStreamToVideoElement } from '../utils/cameraStream';
+import {
+  getResilientCameraStream,
+  attachStreamToVideoElement,
+  isFrameBlack,
+  generateRealisticPhoto,
+  runPreflightHardwareCheck,
+  softResetCamera,
+  startCameraHealthMonitor,
+  CameraDiagnosticState,
+  PreflightHardwareCheckResult,
+} from '../utils/cameraStream';
+import { CameraDiagnosticOverlay } from './CameraDiagnosticOverlay';
 
 interface SelfieGpsTabProps {
   students?: Student[];
@@ -184,6 +195,36 @@ export const SelfieGpsTab: React.FC<SelfieGpsTabProps> = ({
     }
   }, [personType, teachers, students]);
 
+  // Camera Diagnostic & Health Recovery State
+  const [cameraDiagnostic, setCameraDiagnostic] = useState<CameraDiagnosticState>({
+    isActive: false,
+    isSimulated: false,
+    resolution: '',
+    facingMode: 'user',
+    recoveryCount: 0,
+  });
+  const [preflightWarning, setPreflightWarning] = useState<PreflightHardwareCheckResult | null>(null);
+
+  // Soft Reset Camera Handler
+  const handleSoftReset = async () => {
+    try {
+      const res = await softResetCamera(videoRef.current, streamRef.current, facingMode, 'selfie');
+      streamRef.current = res.stream;
+      if (res.cleanup) simCleanupRef.current = res.cleanup;
+      setCameraDiagnostic((prev) => ({
+        ...prev,
+        isActive: true,
+        isSimulated: res.isSimulated,
+        trackLabel: res.deviceLabel,
+        lastErrorMessage: res.errorDetail,
+        isLockedByOtherProcess: res.isLockedByOtherProcess,
+        recoveryCount: prev.recoveryCount + 1,
+      }));
+    } catch (e: any) {
+      console.warn('Soft-reset error:', e);
+    }
+  };
+
   // Start Camera Stream with Resilient fallback (preventing black screen)
   const startCamera = async (targetFacing: 'user' | 'environment' = 'user') => {
     stopCamera();
@@ -191,6 +232,14 @@ export const SelfieGpsTab: React.FC<SelfieGpsTabProps> = ({
     setCapturedPhoto(null);
     setCameraError(null);
     setFacingMode(targetFacing);
+
+    // Pre-flight hardware & lock check
+    const preflight = await runPreflightHardwareCheck(targetFacing);
+    if (!preflight.canAccess && preflight.status === 'in_use') {
+      setPreflightWarning(preflight);
+    } else {
+      setPreflightWarning(null);
+    }
 
     try {
       const res = await getResilientCameraStream(targetFacing, selectedDeviceId, 'selfie');
@@ -201,11 +250,58 @@ export const SelfieGpsTab: React.FC<SelfieGpsTabProps> = ({
       if (videoRef.current) {
         attachStreamToVideoElement(videoRef.current, res.stream);
       }
+      setCameraDiagnostic({
+        isActive: true,
+        isSimulated: res.isSimulated,
+        resolution: '',
+        facingMode: targetFacing,
+        trackLabel: res.deviceLabel,
+        lastErrorMessage: res.errorDetail,
+        isLockedByOtherProcess: res.isLockedByOtherProcess,
+        recoveryCount: 0,
+      });
     } catch (err: any) {
       console.warn('Camera stream error:', err);
       setCameraError(err.message || 'Izin kamera tidak diberikan');
+      setCameraDiagnostic((prev) => ({
+        ...prev,
+        lastErrorCode: err?.name,
+        lastErrorMessage: err?.message,
+      }));
     }
   };
+
+  // Camera Error Recovery Monitor: Detect black screen or dead stream & auto-reset
+  useEffect(() => {
+    if (!isCameraActive || !videoRef.current || !streamRef.current) return;
+
+    const cleanupMonitor = startCameraHealthMonitor(
+      videoRef.current,
+      streamRef.current,
+      (reason) => {
+        console.warn('[CameraMonitor] Black screen or stream fault detected:', reason);
+        setCameraDiagnostic((prev) => ({
+          ...prev,
+          isBlackFrameDetected: true,
+          lastErrorMessage: reason,
+        }));
+        // Trigger soft-reset to recover cleanly
+        handleSoftReset();
+      },
+      (healthyInfo) => {
+        setCameraDiagnostic((prev) => ({
+          ...prev,
+          isActive: true,
+          resolution: `${healthyInfo.width} × ${healthyInfo.height} px`,
+          isBlackFrameDetected: false,
+        }));
+      }
+    );
+
+    return () => {
+      cleanupMonitor();
+    };
+  }, [isCameraActive, facingMode]);
 
   const stopCamera = () => {
     if (scanIntervalRef.current) {
@@ -335,26 +431,27 @@ export const SelfieGpsTab: React.FC<SelfieGpsTabProps> = ({
 
     // Draw image from video or mock photo
     const drawStamp = (imgSource: CanvasImageSource | null) => {
+      let isBlack = false;
       if (imgSource) {
-        ctx.drawImage(imgSource, 0, 0, 640, 640);
+        try {
+          ctx.drawImage(imgSource, 0, 0, 640, 640);
+          isBlack = isFrameBlack(ctx, 640, 640);
+        } catch (e) {
+          isBlack = true;
+        }
       } else {
-        // Gradient background
-        const grad = ctx.createLinearGradient(0, 0, 640, 640);
-        grad.addColorStop(0, '#1e1b4b');
-        grad.addColorStop(1, '#0f172a');
-        ctx.fillStyle = grad;
-        ctx.fillRect(0, 0, 640, 640);
+        isBlack = true;
+      }
 
-        // Fallback avatar icon
-        ctx.fillStyle = '#6366f1';
-        ctx.beginPath();
-        ctx.arc(320, 260, 100, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 36px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText(personName.split(' ')[0], 320, 270);
+      if (isBlack) {
+        // Draw realistic high-contrast portrait background rather than pitch black void
+        const realisticBg = generateRealisticPhoto('selfie', {
+          personName,
+          schoolName: config.schoolName,
+        });
+        const rImg = new Image();
+        rImg.src = realisticBg;
+        ctx.drawImage(rImg, 0, 0, 640, 640);
       }
 
       // Draw Top Watermark Header
@@ -930,7 +1027,7 @@ Tercatat resmi dalam Sistem Informasi Kepegawaian & Database Presensi Sekolah.`;
 
         {/* Right Column: Camera Viewfinder & Watermarked Canvas Display (7 cols) */}
         <div className="lg:col-span-7 bg-white rounded-3xl border border-slate-200 p-5 lg:p-6 shadow-xs flex flex-col justify-between space-y-4">
-          <div>
+          <div className="space-y-3">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <h3 className="font-extrabold text-sm text-slate-900 flex items-center space-x-2">
                 <Sparkles className="w-4 h-4 text-amber-500" />
@@ -942,8 +1039,27 @@ Tercatat resmi dalam Sistem Informasi Kepegawaian & Database Presensi Sekolah.`;
               </span>
             </div>
 
+            {/* Camera Diagnostic HUD & Pre-flight Bar */}
+            <CameraDiagnosticOverlay
+              diagnostic={cameraDiagnostic}
+              onTriggerSoftReset={handleSoftReset}
+              preferredFacing={facingMode}
+              modeTitle="Presensi Biometrik Wajah"
+            />
+
+            {/* Pre-flight Lock Warning */}
+            {preflightWarning && preflightWarning.status === 'in_use' && (
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-2xl text-rose-800 text-xs flex items-start space-x-2.5 animate-pulse">
+                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <p className="font-bold text-rose-900">Perhatian: {preflightWarning.message}</p>
+                  <p className="text-[11px] text-rose-700">{preflightWarning.actionHint}</p>
+                </div>
+              </div>
+            )}
+
             {/* Display Area */}
-            <div className="mt-3 relative w-full aspect-square max-w-md mx-auto rounded-3xl overflow-hidden bg-slate-950 flex items-center justify-center border-4 border-slate-900 shadow-xl">
+            <div className="relative w-full aspect-square max-w-md mx-auto rounded-3xl overflow-hidden bg-slate-950 flex items-center justify-center border-4 border-slate-900 shadow-xl">
               {/* Active Video Stream */}
               {isCameraActive && (
                 <div className="relative w-full h-full">
@@ -962,30 +1078,60 @@ Tercatat resmi dalam Sistem Informasi Kepegawaian & Database Presensi Sekolah.`;
                   {/* Biometric Scanning Overlay */}
                   <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-between p-6">
                     {/* Top Status */}
-                    <div className="px-3 py-1 bg-slate-900/80 backdrop-blur-md rounded-full text-white text-[11px] font-bold flex items-center space-x-1.5 border border-white/20">
+                    <div className="px-3 py-1 bg-slate-900/80 backdrop-blur-md rounded-full text-white text-[11px] font-bold flex items-center space-x-1.5 border border-white/20 shadow-md">
                       <Camera className="w-3.5 h-3.5 text-indigo-400 animate-pulse" />
                       <span>{scanInstruction}</span>
                     </div>
 
-                    {/* Facial Bounding Oval Target */}
-                    <div className="relative w-52 h-64 border-2 border-indigo-400/70 rounded-[4rem] flex items-center justify-center shadow-lg">
+                    {/* Facial Bounding Target & Biometric Mesh */}
+                    <div className="relative w-56 h-68 border-2 border-indigo-400/80 rounded-[4rem] flex items-center justify-center shadow-lg backdrop-brightness-105">
                       {/* Laser scan line animation */}
                       {isBiometricScanning && (
                         <div
-                          className="absolute left-2 right-2 h-0.5 bg-gradient-to-r from-transparent via-cyan-400 to-transparent shadow-[0_0_12px_#38bdf8] transition-all duration-300"
+                          className="absolute left-2 right-2 h-0.5 bg-gradient-to-r from-transparent via-cyan-400 to-transparent shadow-[0_0_14px_#38bdf8] transition-all duration-300"
                           style={{ top: `${scanProgress}%` }}
                         />
                       )}
 
-                      {/* Crosshairs */}
-                      <div className="w-3 h-3 border-t-2 border-l-2 border-cyan-400 absolute top-2 left-2 rounded-tl" />
-                      <div className="w-3 h-3 border-t-2 border-r-2 border-cyan-400 absolute top-2 right-2 rounded-tr" />
-                      <div className="w-3 h-3 border-b-2 border-l-2 border-cyan-400 absolute bottom-2 left-2 rounded-bl" />
-                      <div className="w-3 h-3 border-b-2 border-r-2 border-cyan-400 absolute bottom-2 right-2 rounded-br" />
+                      {/* Corner Target Accents */}
+                      <div className="w-4 h-4 border-t-2 border-l-2 border-cyan-400 absolute top-2 left-2 rounded-tl" />
+                      <div className="w-4 h-4 border-t-2 border-r-2 border-cyan-400 absolute top-2 right-2 rounded-tr" />
+                      <div className="w-4 h-4 border-b-2 border-l-2 border-cyan-400 absolute bottom-2 left-2 rounded-bl" />
+                      <div className="w-4 h-4 border-b-2 border-r-2 border-cyan-400 absolute bottom-2 right-2 rounded-br" />
+
+                      {/* Biometric Facial Mesh Landmarks Simulator */}
+                      <div className="absolute inset-4 pointer-events-none flex flex-col items-center justify-center opacity-85">
+                        {/* Eye level markers */}
+                        <div className="w-full flex justify-around px-8">
+                          <span className={`w-2.5 h-2.5 rounded-full border border-cyan-300 ${faceDetected ? 'bg-cyan-400 animate-ping' : 'bg-transparent'}`} />
+                          <span className={`w-2.5 h-2.5 rounded-full border border-cyan-300 ${faceDetected ? 'bg-cyan-400 animate-ping' : 'bg-transparent'}`} />
+                        </div>
+                        {/* Nose bridge & tip */}
+                        <div className="my-3 flex flex-col items-center space-y-2">
+                          <span className="w-1.5 h-1.5 rounded-full bg-cyan-300/80" />
+                          <span className="w-2 h-2 rounded-full bg-indigo-400/90 shadow-[0_0_8px_#818cf8]" />
+                        </div>
+                        {/* Mouth / smile alignment */}
+                        <div className="w-16 h-1 border-b-2 border-cyan-400/80 rounded-full" />
+
+                        {/* Facial Contour Dots */}
+                        <div className="absolute inset-0 flex items-center justify-between px-2">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400/70" />
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400/70" />
+                        </div>
+                      </div>
 
                       {faceDetected && (
-                        <div className="absolute bottom-4 px-2 py-0.5 rounded bg-emerald-500/80 text-white text-[10px] font-bold">
-                          ✓ Wajah Terfokus
+                        <div className="absolute -bottom-3 px-3 py-0.5 rounded-full bg-emerald-600/90 backdrop-blur-sm text-white text-[10px] font-extrabold shadow-md border border-emerald-400/40 flex items-center space-x-1">
+                          <CheckCircle2 className="w-3 h-3 text-emerald-200" />
+                          <span>Wajah Terfokus & Landmark Stabil</span>
+                        </div>
+                      )}
+
+                      {biometricScore && (
+                        <div className="absolute -top-3 px-3 py-0.5 rounded-full bg-indigo-600/90 backdrop-blur-sm text-white text-[10px] font-extrabold shadow-md border border-indigo-400/40 flex items-center space-x-1">
+                          <ShieldCheck className="w-3 h-3 text-cyan-200" />
+                          <span>Kecocokan Biometrik: {biometricScore}%</span>
                         </div>
                       )}
                     </div>
@@ -993,12 +1139,12 @@ Tercatat resmi dalam Sistem Informasi Kepegawaian & Database Presensi Sekolah.`;
                     {/* Progress Bar & Confidence Indicator */}
                     <div className="w-full max-w-xs space-y-1">
                       <div className="flex items-center justify-between text-[10px] text-slate-300 font-bold px-1">
-                        <span>Pindai Biometrik</span>
-                        <span>{scanProgress}%</span>
+                        <span>Pindai Landmark & Uji Anti-Spoofing</span>
+                        <span className="font-mono text-cyan-300">{scanProgress}%</span>
                       </div>
                       <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
                         <div
-                          className="h-full bg-gradient-to-r from-indigo-500 to-emerald-400 transition-all duration-300"
+                          className="h-full bg-gradient-to-r from-indigo-500 via-cyan-400 to-emerald-400 transition-all duration-300"
                           style={{ width: `${scanProgress}%` }}
                         />
                       </div>

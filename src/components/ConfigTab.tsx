@@ -1150,7 +1150,7 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
               {/* Slider Ambang Batas Liveness Biometrik */}
               <div className="p-4 bg-white rounded-xl border border-slate-200 space-y-2">
                 <div className="flex items-center justify-between text-xs font-bold text-slate-800">
-                  <span>Ambang Batas Keaktifan Biometrik (0.0 - 1.0)</span>
+                  <span>Ambang Batas Keaktifan Sensor (Liveness 0.0 - 1.0)</span>
                   <span className="font-mono text-indigo-600">{(formData.livenessThreshold ?? 0.8).toFixed(2)}</span>
                 </div>
                 <input
@@ -1167,6 +1167,62 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                   <span className="font-bold text-indigo-600">0.8 (Standar Resmi BKD)</span>
                   <span>1.0 (Super Ketat)</span>
                 </div>
+              </div>
+
+              {/* Custom Biometric Confidence Threshold Setting (0.0 to 1.0) */}
+              <div id="biometric-confidence-threshold-setting" className="p-4 bg-white rounded-xl border border-indigo-200 md:col-span-2 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-xs font-bold text-slate-800">
+                  <div className="flex items-center space-x-2">
+                    <span className="w-2 h-2 rounded-full bg-indigo-600"></span>
+                    <span>Ambang Batas Kepercayaan Biometrik Wajah (Biometric Confidence Threshold: 0.0 - 1.0)</span>
+                  </div>
+                  <div className="flex items-center space-x-2 self-start sm:self-auto">
+                    <span className="px-2 py-0.5 rounded bg-indigo-50 border border-indigo-200 font-mono text-indigo-700 text-xs">
+                      {((formData.biometricConfidenceThreshold ?? 0.75) * 100).toFixed(0)}% ({Number(formData.biometricConfidenceThreshold ?? 0.75).toFixed(2)})
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center space-x-4">
+                  <input
+                    type="range"
+                    min="0.00"
+                    max="1.00"
+                    step="0.01"
+                    value={formData.biometricConfidenceThreshold ?? 0.75}
+                    onChange={(e) => {
+                      const val = parseFloat(e.target.value);
+                      setFormData({ ...formData, biometricConfidenceThreshold: isNaN(val) ? 0.75 : Math.max(0, Math.min(1, val)) });
+                    }}
+                    className="flex-1 accent-indigo-600 cursor-pointer"
+                  />
+                  <div className="w-24">
+                    <input
+                      type="number"
+                      min="0"
+                      max="1"
+                      step="0.01"
+                      value={formData.biometricConfidenceThreshold ?? 0.75}
+                      onChange={(e) => {
+                        const val = parseFloat(e.target.value);
+                        setFormData({ ...formData, biometricConfidenceThreshold: isNaN(val) ? 0.75 : Math.max(0, Math.min(1, val)) });
+                      }}
+                      className="w-full px-2.5 py-1.5 text-xs font-mono font-bold bg-slate-50 border border-slate-300 rounded-lg text-slate-800 text-center focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex justify-between text-[10px] text-slate-400">
+                  <span>0.0 (Tanpa Filter)</span>
+                  <span>0.50 (Toleransi Sedang)</span>
+                  <span className="font-bold text-indigo-600">0.75 (Rekomendasi Presensi ASN)</span>
+                  <span>0.90 (Sangat Akurat)</span>
+                  <span>1.0 (Identik 100%)</span>
+                </div>
+
+                <p className="text-[11px] text-slate-500 leading-relaxed border-t border-slate-100 pt-2">
+                  ℹ Digunakan oleh sistem saat mengevaluasi keabsahan data log biometrik baru (<code>handleAddBiometricLog</code>). Jika skor pencocokan wajah di bawah nilai ini, log akan otomatis diberi status <strong>'failed'</strong> dengan severity <strong>'error'</strong> dan alasan kegagalan terperinci.
+                </p>
               </div>
             </div>
           </div>

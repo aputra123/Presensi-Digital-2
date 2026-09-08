@@ -48,8 +48,17 @@ import {
   AcademicEvent,
 } from '../types';
 import { formatTimeIndo, playBeepSound, checkDateIsHoliday } from '../utils/soundAndDate';
-import { getResilientCameraStream, attachStreamToVideoElement } from '../utils/cameraStream';
+import {
+  getResilientCameraStream,
+  attachStreamToVideoElement,
+  runPreflightHardwareCheck,
+  softResetCamera,
+  startCameraHealthMonitor,
+  CameraDiagnosticState,
+} from '../utils/cameraStream';
+import { CameraDiagnosticOverlay } from './CameraDiagnosticOverlay';
 import { createDynamicQrString, validateQrCodeSecurity } from '../utils/qrSecurity';
+import jsQR from 'jsqr';
 
 interface SessionScanItem {
   id: string;
@@ -144,12 +153,48 @@ export const QrScannerTab: React.FC<QrScannerTabProps> = ({
   const [dynamicTimeLeft, setDynamicTimeLeft] = useState<number>(60);
   const [copiedToken, setCopiedToken] = useState(false);
 
-  // Start Camera Stream with Resilient Engine
+  // Camera Diagnostic & Health Recovery State
+  const [cameraDiagnostic, setCameraDiagnostic] = useState<CameraDiagnosticState>({
+    isActive: false,
+    isSimulated: false,
+    resolution: '',
+    facingMode: 'environment',
+    recoveryCount: 0,
+  });
+
+  // Soft Reset Camera Handler
+  const handleSoftReset = async () => {
+    try {
+      const res = await softResetCamera(videoRef.current, streamRef.current, facingMode, 'qr');
+      streamRef.current = res.stream;
+      if (res.cleanup) simCleanupRef.current = res.cleanup;
+      setCameraDiagnostic((prev) => ({
+        ...prev,
+        isActive: true,
+        isSimulated: res.isSimulated,
+        trackLabel: res.deviceLabel,
+        lastErrorMessage: res.errorDetail,
+        isLockedByOtherProcess: res.isLockedByOtherProcess,
+        recoveryCount: prev.recoveryCount + 1,
+      }));
+    } catch (e: any) {
+      console.warn('QR Scanner Soft-reset error:', e);
+    }
+  };
+
+  // Start Camera Stream with Resilient Engine & Pre-flight check
   const startCamera = async (targetFacing: 'user' | 'environment' = facingMode) => {
     stopCamera();
     setIsCameraLive(true);
+
+    // Pre-flight check
+    const preflight = await runPreflightHardwareCheck(targetFacing);
+    if (!preflight.canAccess && preflight.status === 'in_use') {
+      console.warn('QR Camera is locked by other process:', preflight.message);
+    }
+
     try {
-      const res = await getResilientCameraStream(targetFacing, undefined, 'selfie');
+      const res = await getResilientCameraStream(targetFacing, undefined, 'qr');
       streamRef.current = res.stream;
       if (res.cleanup) {
         simCleanupRef.current = res.cleanup;
@@ -157,10 +202,56 @@ export const QrScannerTab: React.FC<QrScannerTabProps> = ({
       if (videoRef.current) {
         attachStreamToVideoElement(videoRef.current, res.stream);
       }
-    } catch (e) {
+      setCameraDiagnostic({
+        isActive: true,
+        isSimulated: res.isSimulated,
+        resolution: '',
+        facingMode: targetFacing,
+        trackLabel: res.deviceLabel,
+        lastErrorMessage: res.errorDetail,
+        isLockedByOtherProcess: res.isLockedByOtherProcess,
+        recoveryCount: 0,
+      });
+    } catch (e: any) {
       console.warn('Camera stream notice:', e);
+      setCameraDiagnostic((prev) => ({
+        ...prev,
+        lastErrorCode: e?.name,
+        lastErrorMessage: e?.message,
+      }));
     }
   };
+
+  // Continuous Camera Stream & Black Frame Health Monitor
+  useEffect(() => {
+    if (!isCameraLive || !videoRef.current || !streamRef.current) return;
+
+    const cleanupMonitor = startCameraHealthMonitor(
+      videoRef.current,
+      streamRef.current,
+      (reason) => {
+        console.warn('[QrScanner] Camera stream issue detected:', reason);
+        setCameraDiagnostic((prev) => ({
+          ...prev,
+          isBlackFrameDetected: true,
+          lastErrorMessage: reason,
+        }));
+        handleSoftReset();
+      },
+      (healthy) => {
+        setCameraDiagnostic((prev) => ({
+          ...prev,
+          isActive: true,
+          resolution: `${healthy.width} × ${healthy.height} px`,
+          isBlackFrameDetected: false,
+        }));
+      }
+    );
+
+    return () => {
+      cleanupMonitor();
+    };
+  }, [isCameraLive, facingMode]);
 
   const stopCamera = () => {
     if (simCleanupRef.current) {
@@ -185,6 +276,61 @@ export const QrScannerTab: React.FC<QrScannerTabProps> = ({
     setFacingMode(next);
     startCamera(next);
   };
+
+  // Check if today is a holiday in academic events
+  const holidayInfo = checkDateIsHoliday(todayDate, events);
+  const isHolidayLocked = holidayInfo.isHoliday && !overrideHoliday;
+
+  // Real-Time Camera QR Frame Decoder using jsQR
+  const lastScannedCodeRef = useRef<{ code: string; timestamp: number }>({ code: '', timestamp: 0 });
+
+  useEffect(() => {
+    if (!isScanning) return;
+
+    let timer: any;
+    let isDecoding = false;
+    const offscreenCanvas = document.createElement('canvas');
+    const offscreenCtx = offscreenCanvas.getContext('2d', { willReadFrequently: true });
+
+    const decodeFrame = () => {
+      if (isDecoding || !videoRef.current || !offscreenCtx) return;
+      const video = videoRef.current;
+
+      if (video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0) {
+        try {
+          isDecoding = true;
+          const w = Math.min(640, video.videoWidth);
+          const h = Math.min(480, video.videoHeight);
+          offscreenCanvas.width = w;
+          offscreenCanvas.height = h;
+
+          offscreenCtx.drawImage(video, 0, 0, w, h);
+          const imageData = offscreenCtx.getImageData(0, 0, w, h);
+          const decoded = jsQR(imageData.data, w, h, { inversionAttempts: 'dontInvert' });
+
+          if (decoded && decoded.data && decoded.data.trim().length > 0) {
+            const raw = decoded.data.trim();
+            const now = Date.now();
+            // Debounce: prevent same QR code from being read multiple times within 2.5s
+            if (raw !== lastScannedCodeRef.current.code || now - lastScannedCodeRef.current.timestamp > 2500) {
+              lastScannedCodeRef.current = { code: raw, timestamp: now };
+              handleProcessScannedCode(raw);
+            }
+          }
+        } catch (e) {
+          // ignore frame decode hiccups
+        } finally {
+          isDecoding = false;
+        }
+      }
+    };
+
+    timer = setInterval(decodeFrame, 250); // check 4 times per second
+
+    return () => {
+      clearInterval(timer);
+    };
+  }, [isScanning, isHolidayLocked, holidayInfo, safeTeachers, safeStudents, attendanceType, rapidScanMode]);
 
   // Generate 60-second Dynamic QR Code payload
   const generateDynamicQrCode = async () => {
@@ -244,10 +390,6 @@ export const QrScannerTab: React.FC<QrScannerTabProps> = ({
     }, 1000);
     return () => clearInterval(interval);
   }, [showDynamicQrModal, dynamicSelectedPersonId, dynamicPersonType]);
-
-  // Check if today is a holiday in academic events
-  const holidayInfo = checkDateIsHoliday(todayDate, events);
-  const isHolidayLocked = holidayInfo.isHoliday && !overrideHoliday;
 
   // Determine attendance status based on current time
   const evaluateStatus = (): { status: AttendanceStatus; note: string } => {
@@ -763,7 +905,15 @@ export const QrScannerTab: React.FC<QrScannerTabProps> = ({
       {/* Main Scanner Section Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Left Column: Virtual Camera Laser View & Scanner Feedback */}
-        <div className="lg:col-span-6 space-y-5">
+        <div className="lg:col-span-6 space-y-4">
+          {/* Camera Diagnostic HUD & Pre-flight Bar */}
+          <CameraDiagnosticOverlay
+            diagnostic={cameraDiagnostic}
+            onTriggerSoftReset={handleSoftReset}
+            preferredFacing={facingMode}
+            modeTitle="Pemindai Barcode / QR Presensi"
+          />
+
           {/* Real/Resilient Live Camera Viewfinder (Never Black Screen) */}
           <div className="relative aspect-[4/3] rounded-[2.5rem] bg-slate-950 overflow-hidden border-2 border-slate-800 flex flex-col items-center justify-center text-white shadow-lg">
             {/* Live Video Tag connected to resilient camera stream */}
@@ -831,6 +981,34 @@ export const QrScannerTab: React.FC<QrScannerTabProps> = ({
                   </div>
                 )}
               </div>
+            </div>
+          </div>
+
+          {/* Quick Scanner Helper Bar */}
+          <div className="flex items-center justify-between gap-2 p-3 bg-slate-900 text-white rounded-2xl text-xs border border-slate-800 shadow-xs">
+            <div className="flex items-center space-x-2 text-slate-300">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="font-bold text-[11px]">Sensor Kamera QR Aktif</span>
+            </div>
+            <div className="flex items-center space-x-1.5">
+              {safeStudents[0] && (
+                <button
+                  type="button"
+                  onClick={() => handleScanPerson(safeStudents[0], 'Simulasi Scan QR Siswa')}
+                  className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-[10px] transition-colors cursor-pointer shadow-xs"
+                >
+                  Tes Scan Siswa
+                </button>
+              )}
+              {safeTeachers[0] && (
+                <button
+                  type="button"
+                  onClick={() => handleScanPerson(safeTeachers[0], 'Simulasi Scan QR Guru')}
+                  className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg text-[10px] transition-colors cursor-pointer shadow-xs"
+                >
+                  Tes Scan Guru
+                </button>
+              )}
             </div>
           </div>
 
