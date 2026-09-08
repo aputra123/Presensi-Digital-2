@@ -33,6 +33,7 @@ import {
   isFrameBlack,
   generateRealisticPhoto,
 } from '../utils/cameraStream';
+import { useCameraOrientation, CameraOrientationSelector } from '../utils/cameraOrientation';
 
 interface ApelDocumentationTabProps {
   config: SchoolConfig;
@@ -117,7 +118,11 @@ export const ApelDocumentationTab: React.FC<ApelDocumentationTabProps> = ({
     );
   };
 
-  // Start Camera with resilient multi-platform fallback
+  // Camera Orientation & Auto Landscape/Portrait for Mobile Phones and Laptops
+  const cameraOri = useCameraOrientation('auto', 'ais_apel_orientation_mode');
+  const prevOriRef = useRef(cameraOri.effectiveOrientation);
+
+  // Start Camera with resilient multi-platform fallback and dynamic landscape/portrait
   const startCamera = async (targetFacing: 'user' | 'environment' = facingMode) => {
     stopCamera();
     setIsCameraActive(true);
@@ -126,7 +131,7 @@ export const ApelDocumentationTab: React.FC<ApelDocumentationTabProps> = ({
     setFacingMode(targetFacing);
 
     try {
-      const res = await getResilientCameraStream(targetFacing, undefined, 'apel');
+      const res = await getResilientCameraStream(targetFacing, undefined, 'apel', cameraOri.mode);
       streamRef.current = res.stream;
       if (res.cleanup) {
         simCleanupRef.current = res.cleanup;
@@ -138,6 +143,15 @@ export const ApelDocumentationTab: React.FC<ApelDocumentationTabProps> = ({
       console.warn('Camera initialization error:', err);
     }
   };
+
+  // Automatically update camera stream when device orientation flips or mode changes
+  useEffect(() => {
+    if (isCameraActive && prevOriRef.current !== cameraOri.effectiveOrientation) {
+      prevOriRef.current = cameraOri.effectiveOrientation;
+      startCamera(facingMode);
+    }
+    prevOriRef.current = cameraOri.effectiveOrientation;
+  }, [cameraOri.effectiveOrientation, isCameraActive, facingMode]);
 
   const stopCamera = () => {
     if (simCleanupRef.current) {
@@ -655,21 +669,50 @@ ${config.principalName}`;
               </div>
             </div>
 
-            {/* Photo Viewport */}
-            <div className="relative aspect-4/3 w-full rounded-2xl overflow-hidden bg-slate-950 border-2 border-slate-200 flex items-center justify-center">
+            {/* Photo Viewport Header with Orientation Selector */}
+            <div className="flex items-center justify-between pb-1">
+              <span className="text-xs font-bold text-slate-700">Pratinjau Kamera & Dokumentasi</span>
+              <CameraOrientationSelector
+                mode={cameraOri.mode}
+                effectiveOrientation={cameraOri.effectiveOrientation}
+                deviceCategory={cameraOri.deviceCategory}
+                onCycle={cameraOri.cycleOrientation}
+                onSelect={cameraOri.setMode}
+                isCompact
+              />
+            </div>
+
+            {/* Photo Viewport - Auto Landscape/Portrait for Mobile Phones & Laptops */}
+            <div
+              className={`relative w-full rounded-2xl overflow-hidden bg-slate-950 border-2 border-slate-200 flex items-center justify-center transition-all duration-300 ${cameraOri.aspectClass}`}
+              style={cameraOri.containerStyle}
+            >
               {isCameraActive ? (
-                <video
-                  ref={(el) => {
-                    videoRef.current = el;
-                    if (el && streamRef.current) {
-                      attachStreamToVideoElement(el, streamRef.current);
-                    }
-                  }}
-                  autoPlay
-                  playsInline
-                  muted
-                  className="w-full h-full object-cover"
-                />
+                <>
+                  <video
+                    ref={(el) => {
+                      videoRef.current = el;
+                      if (el && streamRef.current) {
+                        attachStreamToVideoElement(el, streamRef.current);
+                      }
+                    }}
+                    autoPlay
+                    playsInline
+                    muted
+                    className="w-full h-full object-cover"
+                  />
+                  {/* Top-Right Quick Orientation Switcher Overlay */}
+                  <div className="absolute top-3 right-3 z-10">
+                    <button
+                      type="button"
+                      onClick={cameraOri.cycleOrientation}
+                      className="px-2.5 py-1 bg-slate-900/80 hover:bg-slate-800 text-white rounded-full text-[10px] font-bold border border-white/20 backdrop-blur-md shadow-md flex items-center space-x-1 cursor-pointer"
+                      title="Ubah Orientasi Kamera (Auto ➔ Lanskap ➔ Potret)"
+                    >
+                      <span>{cameraOri.effectiveOrientation === 'portrait' ? '📱 Potret' : '💻 Lanskap'}</span>
+                    </button>
+                  </div>
+                </>
               ) : stampedPhoto ? (
                 <img
                   src={stampedPhoto}

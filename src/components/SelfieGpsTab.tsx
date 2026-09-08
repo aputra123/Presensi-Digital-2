@@ -48,6 +48,7 @@ import {
   PreflightHardwareCheckResult,
 } from '../utils/cameraStream';
 import { CameraDiagnosticOverlay } from './CameraDiagnosticOverlay';
+import { useCameraOrientation, CameraOrientationSelector } from '../utils/cameraOrientation';
 
 interface SelfieGpsTabProps {
   students?: Student[];
@@ -195,6 +196,10 @@ export const SelfieGpsTab: React.FC<SelfieGpsTabProps> = ({
     }
   }, [personType, teachers, students]);
 
+  // Camera Orientation & Cross-Platform Auto-Detection (Mobile phones & Laptops)
+  const cameraOri = useCameraOrientation('auto', 'ais_selfie_orientation_mode');
+  const prevOriRef = useRef(cameraOri.effectiveOrientation);
+
   // Camera Diagnostic & Health Recovery State
   const [cameraDiagnostic, setCameraDiagnostic] = useState<CameraDiagnosticState>({
     isActive: false,
@@ -208,7 +213,7 @@ export const SelfieGpsTab: React.FC<SelfieGpsTabProps> = ({
   // Soft Reset Camera Handler
   const handleSoftReset = async () => {
     try {
-      const res = await softResetCamera(videoRef.current, streamRef.current, facingMode, 'selfie');
+      const res = await softResetCamera(videoRef.current, streamRef.current, facingMode, 'selfie', cameraOri.mode);
       streamRef.current = res.stream;
       if (res.cleanup) simCleanupRef.current = res.cleanup;
       setCameraDiagnostic((prev) => ({
@@ -225,7 +230,7 @@ export const SelfieGpsTab: React.FC<SelfieGpsTabProps> = ({
     }
   };
 
-  // Start Camera Stream with Resilient fallback (preventing black screen)
+  // Start Camera Stream with Resilient fallback and Landscape/Portrait orientation
   const startCamera = async (targetFacing: 'user' | 'environment' = 'user') => {
     stopCamera();
     setIsCameraActive(true);
@@ -242,7 +247,7 @@ export const SelfieGpsTab: React.FC<SelfieGpsTabProps> = ({
     }
 
     try {
-      const res = await getResilientCameraStream(targetFacing, selectedDeviceId, 'selfie');
+      const res = await getResilientCameraStream(targetFacing, selectedDeviceId, 'selfie', cameraOri.mode);
       streamRef.current = res.stream;
       if (res.cleanup) {
         simCleanupRef.current = res.cleanup;
@@ -270,6 +275,15 @@ export const SelfieGpsTab: React.FC<SelfieGpsTabProps> = ({
       }));
     }
   };
+
+  // Re-sync camera constraints automatically when device orientation flips or mode changes
+  useEffect(() => {
+    if (isCameraActive && prevOriRef.current !== cameraOri.effectiveOrientation) {
+      prevOriRef.current = cameraOri.effectiveOrientation;
+      startCamera(facingMode);
+    }
+    prevOriRef.current = cameraOri.effectiveOrientation;
+  }, [cameraOri.effectiveOrientation, isCameraActive, facingMode]);
 
   // Camera Error Recovery Monitor: Detect black screen or dead stream & auto-reset
   useEffect(() => {
@@ -402,8 +416,11 @@ export const SelfieGpsTab: React.FC<SelfieGpsTabProps> = ({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    canvas.width = 640;
-    canvas.height = 640;
+    const isPortrait = cameraOri.effectiveOrientation === 'portrait';
+    canvas.width = isPortrait ? 720 : 960;
+    canvas.height = isPortrait ? 960 : 720;
+    const w = canvas.width;
+    const h = canvas.height;
 
     const now = new Date();
     const timeStr = now.toLocaleTimeString('id-ID', { hour12: false }) + ' WIB';
@@ -434,8 +451,8 @@ export const SelfieGpsTab: React.FC<SelfieGpsTabProps> = ({
       let isBlack = false;
       if (imgSource) {
         try {
-          ctx.drawImage(imgSource, 0, 0, 640, 640);
-          isBlack = isFrameBlack(ctx, 640, 640);
+          ctx.drawImage(imgSource, 0, 0, w, h);
+          isBlack = isFrameBlack(ctx, w, h);
         } catch (e) {
           isBlack = true;
         }
@@ -451,12 +468,12 @@ export const SelfieGpsTab: React.FC<SelfieGpsTabProps> = ({
         });
         const rImg = new Image();
         rImg.src = realisticBg;
-        ctx.drawImage(rImg, 0, 0, 640, 640);
+        ctx.drawImage(rImg, 0, 0, w, h);
       }
 
       // Draw Top Watermark Header
       ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
-      ctx.fillRect(0, 0, 640, 75);
+      ctx.fillRect(0, 0, w, 75);
 
       ctx.fillStyle = '#fbbf24';
       ctx.font = 'bold 16px sans-serif';
@@ -465,48 +482,50 @@ export const SelfieGpsTab: React.FC<SelfieGpsTabProps> = ({
 
       ctx.fillStyle = '#e2e8f0';
       ctx.font = '12px sans-serif';
-      ctx.fillText(`NPSN: ${config.npsn} • DOKUMENTASI PRESENSI BIOMETRIK BKD & DRIVE`, 20, 52);
+      ctx.fillText(`NPSN: ${config.npsn} • DOKUMENTASI BIOMETRIK [${isPortrait ? 'POTRET 📱' : 'LANSKAP 💻'}]`, 20, 52);
 
       // Biometric Verified Tag at top right
       ctx.fillStyle = '#10b981';
       ctx.beginPath();
-      ctx.arc(580, 35, 14, 0, Math.PI * 2);
+      ctx.arc(w - 50, 35, 14, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = '#ffffff';
       ctx.font = 'bold 12px sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText('✓', 580, 40);
+      ctx.fillText('✓', w - 50, 40);
 
       // Draw Bottom Watermark Box (Official Stamp)
+      const bottomBoxH = 175;
+      const bottomBoxY = h - bottomBoxH;
       ctx.fillStyle = 'rgba(15, 23, 42, 0.92)';
-      ctx.fillRect(0, 465, 640, 175);
+      ctx.fillRect(0, bottomBoxY, w, bottomBoxH);
 
       // Accent border
       ctx.strokeStyle = '#10b981';
       ctx.lineWidth = 4;
-      ctx.strokeRect(10, 475, 620, 155);
+      ctx.strokeRect(10, bottomBoxY + 10, w - 20, bottomBoxH - 20);
 
       // Text Metadata
       ctx.fillStyle = '#ffffff';
       ctx.font = 'bold 18px sans-serif';
       ctx.textAlign = 'left';
-      ctx.fillText(personName, 25, 505);
+      ctx.fillText(personName, 25, bottomBoxY + 40);
 
       ctx.fillStyle = '#94a3b8';
       ctx.font = 'bold 13px monospace';
-      ctx.fillText(`${identifier}  |  ${statusLabel}`, 25, 530);
+      ctx.fillText(`${identifier}  |  ${statusLabel}`, 25, bottomBoxY + 65);
 
       ctx.fillStyle = '#38bdf8';
       ctx.font = 'bold 13px sans-serif';
-      ctx.fillText(`SESI: PRESENSI ${sessionType.toUpperCase()} • ${timeStr} • BIO-MATCH: ${score}%`, 25, 555);
+      ctx.fillText(`SESI: PRESENSI ${sessionType.toUpperCase()} • ${timeStr} • BIO-MATCH: ${score}%`, 25, bottomBoxY + 90);
 
       ctx.fillStyle = '#cbd5e1';
       ctx.font = '11px sans-serif';
-      ctx.fillText(`📅 ${dateStr}  |  📍 GPS: ${gpsLocation.lat.toFixed(5)}, ${gpsLocation.lng.toFixed(5)}`, 25, 578);
+      ctx.fillText(`📅 ${dateStr}  |  📍 GPS: ${gpsLocation.lat.toFixed(5)}, ${gpsLocation.lng.toFixed(5)}`, 25, bottomBoxY + 113);
 
       ctx.fillStyle = '#10b981';
       ctx.font = 'bold 11px sans-serif';
-      ctx.fillText(`✓ FRONT-CAM VERIFIED • RADIUS VALID (${gpsLocation.distanceMeter}m) • DRIVE SYNC`, 25, 602);
+      ctx.fillText(`✓ FRONT-CAM VERIFIED • RADIUS VALID (${gpsLocation.distanceMeter}m) • DRIVE SYNC`, 25, bottomBoxY + 137);
 
       const dataUrl = canvas.toDataURL('image/jpeg', 0.95);
       setCapturedPhoto(dataUrl);
@@ -1033,10 +1052,14 @@ Tercatat resmi dalam Sistem Informasi Kepegawaian & Database Presensi Sekolah.`;
                 <Sparkles className="w-4 h-4 text-amber-500" />
                 <span>Pratinjau Biometrik & Dokumentasi Resmi</span>
               </h3>
-              <span className="text-[10px] font-bold text-slate-500 font-mono flex items-center space-x-1">
-                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-                <span>MediaDevices Front-Cam</span>
-              </span>
+              <CameraOrientationSelector
+                mode={cameraOri.mode}
+                effectiveOrientation={cameraOri.effectiveOrientation}
+                deviceCategory={cameraOri.deviceCategory}
+                onCycle={cameraOri.cycleOrientation}
+                onSelect={cameraOri.setMode}
+                isCompact
+              />
             </div>
 
             {/* Camera Diagnostic HUD & Pre-flight Bar */}
@@ -1045,6 +1068,10 @@ Tercatat resmi dalam Sistem Informasi Kepegawaian & Database Presensi Sekolah.`;
               onTriggerSoftReset={handleSoftReset}
               preferredFacing={facingMode}
               modeTitle="Presensi Biometrik Wajah"
+              orientationMode={cameraOri.mode}
+              effectiveOrientation={cameraOri.effectiveOrientation}
+              deviceCategory={cameraOri.deviceCategory}
+              onCycleOrientation={cameraOri.cycleOrientation}
             />
 
             {/* Pre-flight Lock Warning */}
@@ -1058,8 +1085,11 @@ Tercatat resmi dalam Sistem Informasi Kepegawaian & Database Presensi Sekolah.`;
               </div>
             )}
 
-            {/* Display Area */}
-            <div className="relative w-full aspect-square max-w-md mx-auto rounded-3xl overflow-hidden bg-slate-950 flex items-center justify-center border-4 border-slate-900 shadow-xl">
+            {/* Display Area - Responsive Landscape/Portrait Aspect Ratio for all Mobile Phones & Laptops */}
+            <div
+              className={`relative w-full transition-all duration-300 rounded-3xl overflow-hidden bg-slate-950 flex items-center justify-center border-4 border-slate-900 shadow-xl ${cameraOri.aspectClass}`}
+              style={cameraOri.containerStyle}
+            >
               {/* Active Video Stream */}
               {isCameraActive && (
                 <div className="relative w-full h-full">
@@ -1076,15 +1106,31 @@ Tercatat resmi dalam Sistem Informasi Kepegawaian & Database Presensi Sekolah.`;
                     className={`w-full h-full object-cover ${facingMode === 'user' ? 'scale-x-[-1]' : ''}`}
                   />
                   {/* Biometric Scanning Overlay */}
-                  <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-between p-6">
-                    {/* Top Status */}
-                    <div className="px-3 py-1 bg-slate-900/80 backdrop-blur-md rounded-full text-white text-[11px] font-bold flex items-center space-x-1.5 border border-white/20 shadow-md">
-                      <Camera className="w-3.5 h-3.5 text-indigo-400 animate-pulse" />
-                      <span>{scanInstruction}</span>
+                  <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-between p-4 sm:p-6">
+                    {/* Top Status & Quick Orientation Pill */}
+                    <div className="w-full flex items-center justify-between pointer-events-auto">
+                      <div className="px-3 py-1 bg-slate-900/85 backdrop-blur-md rounded-full text-white text-[11px] font-bold flex items-center space-x-1.5 border border-white/20 shadow-md">
+                        <Camera className="w-3.5 h-3.5 text-indigo-400 animate-pulse" />
+                        <span className="truncate max-w-[150px] sm:max-w-[200px]">{scanInstruction}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={cameraOri.cycleOrientation}
+                        title="Klik untuk rotasi orientasi kamera (Auto / Lanskap / Potret)"
+                        className="px-2.5 py-1 bg-slate-900/85 backdrop-blur-md hover:bg-slate-800 text-white rounded-full text-[10px] font-bold border border-white/20 shadow-md flex items-center space-x-1 cursor-pointer"
+                      >
+                        <span>{cameraOri.effectiveOrientation === 'portrait' ? '📱 Potret' : '💻 Lanskap'}</span>
+                      </button>
                     </div>
 
                     {/* Facial Bounding Target & Biometric Mesh */}
-                    <div className="relative w-56 h-68 border-2 border-indigo-400/80 rounded-[4rem] flex items-center justify-center shadow-lg backdrop-brightness-105">
+                    <div
+                      className={`relative ${
+                        cameraOri.effectiveOrientation === 'portrait'
+                          ? 'w-52 sm:w-56 h-64 sm:h-68 rounded-[4rem]'
+                          : 'w-56 sm:w-68 h-52 sm:h-60 rounded-[3rem]'
+                      } border-2 border-indigo-400/80 flex items-center justify-center shadow-lg backdrop-brightness-105 transition-all duration-300`}
+                    >
                       {/* Laser scan line animation */}
                       {isBiometricScanning && (
                         <div

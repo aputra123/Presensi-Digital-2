@@ -51,6 +51,7 @@ import { SignaturePad } from './SignaturePad';
 import { SignaturePadModal } from './SignaturePadModal';
 import { PrintModal } from './PrintModal';
 import { CameraDiagnosticOverlay } from './CameraDiagnosticOverlay';
+import { useCameraOrientation, CameraOrientationSelector } from '../utils/cameraOrientation';
 import { formatDateIndo, downloadCsv } from '../utils/soundAndDate';
 import {
   getResilientCameraStream,
@@ -216,7 +217,10 @@ export const AsnAttendanceTableTab: React.FC<AsnAttendanceTableTabProps> = ({
     photoUrl: null,
   });
 
-  // Camera stream states for Apel Documentation
+  // Camera stream states for Apel Documentation with Auto Landscape/Portrait
+  const cameraOri = useCameraOrientation('auto', 'ais_asn_apel_orientation_mode');
+  const prevOriRef = useRef(cameraOri.effectiveOrientation);
+
   const [isCameraActive, setIsCameraActive] = useState<boolean>(false);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('environment');
   const [cameraDiagnostic, setCameraDiagnostic] = useState<CameraDiagnosticState>({
@@ -458,7 +462,8 @@ export const AsnAttendanceTableTab: React.FC<AsnAttendanceTableTabProps> = ({
       const streamResult = await getResilientCameraStream(
         facingMode,
         undefined,
-        'apel'
+        'apel',
+        cameraOri.mode
       );
 
       apelStreamRef.current = streamResult.stream;
@@ -505,6 +510,15 @@ export const AsnAttendanceTableTab: React.FC<AsnAttendanceTableTabProps> = ({
     }
   };
 
+  // Automatically update camera stream when device orientation flips or mode changes
+  useEffect(() => {
+    if (isCameraActive && prevOriRef.current !== cameraOri.effectiveOrientation) {
+      prevOriRef.current = cameraOri.effectiveOrientation;
+      handleStartApelCamera();
+    }
+    prevOriRef.current = cameraOri.effectiveOrientation;
+  }, [cameraOri.effectiveOrientation, isCameraActive, facingMode]);
+
   const handleSoftResetApelCamera = async () => {
     setCameraDiagnostic((prev) => ({
       ...prev,
@@ -515,7 +529,8 @@ export const AsnAttendanceTableTab: React.FC<AsnAttendanceTableTabProps> = ({
         apelVideoRef.current,
         apelStreamRef.current,
         facingMode,
-        'apel'
+        'apel',
+        cameraOri.mode
       );
       apelStreamRef.current = resetResult.stream;
       if (apelVideoRef.current) {
@@ -544,14 +559,17 @@ export const AsnAttendanceTableTab: React.FC<AsnAttendanceTableTabProps> = ({
     const ctx = canvas.getContext('2d');
     if (!ctx) return '';
 
-    canvas.width = 1024;
-    canvas.height = 768;
+    const isPortrait = cameraOri.effectiveOrientation === 'portrait';
+    const w = isPortrait ? 768 : 1024;
+    const h = isPortrait ? 1024 : 768;
+    canvas.width = w;
+    canvas.height = h;
 
     let isBlack = false;
     if (sourceImgOrVideo) {
       try {
-        ctx.drawImage(sourceImgOrVideo, 0, 0, 1024, 768);
-        isBlack = isFrameBlack(ctx, 1024, 768);
+        ctx.drawImage(sourceImgOrVideo, 0, 0, w, h);
+        isBlack = isFrameBlack(ctx, w, h);
       } catch {
         isBlack = true;
       }
@@ -567,14 +585,14 @@ export const AsnAttendanceTableTab: React.FC<AsnAttendanceTableTabProps> = ({
       });
       const img = new Image();
       img.src = realisticBg;
-      ctx.drawImage(img, 0, 0, 1024, 768);
+      ctx.drawImage(img, 0, 0, w, h);
     }
 
-    // Draw Official Government Watermark Badge (Bottom Right)
-    const badgeW = 460;
+    // Draw Official Government Watermark Badge (Adaptive Bottom Right / Bottom Center)
+    const badgeW = isPortrait ? Math.min(w - 32, 500) : 460;
     const badgeH = 175;
-    const badgeX = 1024 - badgeW - 20;
-    const badgeY = 768 - badgeH - 20;
+    const badgeX = isPortrait ? Math.floor((w - badgeW) / 2) : w - badgeW - 20;
+    const badgeY = h - badgeH - 20;
 
     ctx.save();
     ctx.fillStyle = 'rgba(15, 23, 42, 0.92)';
@@ -2386,9 +2404,22 @@ export const AsnAttendanceTableTab: React.FC<AsnAttendanceTableTabProps> = ({
 
             {/* Modal Body */}
             <div className="p-5 space-y-4 max-h-[80vh] overflow-y-auto">
+              {/* Camera Orientation Selector for all smartphones and laptops */}
+              <CameraOrientationSelector
+                mode={cameraOri.mode}
+                effectiveOrientation={cameraOri.effectiveOrientation}
+                deviceCategory={cameraOri.deviceCategory}
+                onCycle={cameraOri.cycleOrientation}
+                onSelect={cameraOri.setMode}
+                isCompact
+              />
+
               {/* Camera Stream / Photo Display Area */}
               <div className="space-y-2">
-                <div className="relative rounded-2xl overflow-hidden aspect-[4/3] bg-slate-950 border border-slate-200 flex items-center justify-center">
+                <div
+                  className={`relative rounded-2xl overflow-hidden bg-slate-950 border border-slate-200 flex items-center justify-center transition-all duration-300 ${cameraOri.aspectClass}`}
+                  style={cameraOri.containerStyle}
+                >
                   {/* Live Video Element */}
                   <video
                     ref={apelVideoRef}
@@ -2405,6 +2436,10 @@ export const AsnAttendanceTableTab: React.FC<AsnAttendanceTableTabProps> = ({
                       preferredFacing={facingMode}
                       onTriggerSoftReset={handleSoftResetApelCamera}
                       modeTitle="Kamera Dokumentasi Apel"
+                      orientationMode={cameraOri.mode}
+                      effectiveOrientation={cameraOri.effectiveOrientation}
+                      deviceCategory={cameraOri.deviceCategory}
+                      onCycleOrientation={cameraOri.cycleOrientation}
                     />
                   )}
 
@@ -2430,13 +2465,22 @@ export const AsnAttendanceTableTab: React.FC<AsnAttendanceTableTabProps> = ({
 
                   {/* Camera Top HUD Controls */}
                   {isCameraActive && (
-                    <div className="absolute top-3 left-3 right-3 flex items-center justify-between pointer-events-auto">
+                    <div className="absolute top-3 left-3 right-3 flex items-center justify-between pointer-events-auto z-10">
                       <span className="px-2.5 py-1 rounded-full bg-slate-900/80 backdrop-blur-xs text-[10px] font-mono text-emerald-400 font-bold border border-emerald-500/40 flex items-center space-x-1.5">
                         <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
                         <span>LIVE PREVIEW</span>
                       </span>
 
                       <div className="flex items-center space-x-1.5">
+                        <CameraOrientationSelector
+                          mode={cameraOri.mode}
+                          effectiveOrientation={cameraOri.effectiveOrientation}
+                          deviceCategory={cameraOri.deviceCategory}
+                          onCycle={cameraOri.cycleOrientation}
+                          onSelect={cameraOri.setMode}
+                          isCompact
+                        />
+
                         <button
                           onClick={() => {
                             const nextMode = facingMode === 'user' ? 'environment' : 'user';
@@ -2445,7 +2489,7 @@ export const AsnAttendanceTableTab: React.FC<AsnAttendanceTableTabProps> = ({
                           }}
                           className="px-2.5 py-1 rounded-full bg-slate-900/80 backdrop-blur-xs text-[10px] text-white font-bold border border-white/20 hover:bg-slate-800 transition-colors cursor-pointer"
                         >
-                          🔄 Balik Kamera ({facingMode === 'user' ? 'Depan' : 'Belakang'})
+                          🔄 {facingMode === 'user' ? 'Depan' : 'Belakang'}
                         </button>
                       </div>
                     </div>

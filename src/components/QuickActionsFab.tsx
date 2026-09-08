@@ -16,6 +16,8 @@ import {
   Camera,
   MapPin,
   Sparkles,
+  Download,
+  Smartphone,
 } from 'lucide-react';
 import {
   AttendanceRecord,
@@ -35,6 +37,7 @@ interface QuickActionsFabProps {
   onToggleSystemLock: (locked: boolean) => void;
   onAddEmergencyAbsence: (leave: LeaveRequest, record?: AttendanceRecord) => void;
   onNavigateTab: (tab: ActiveTab) => void;
+  onOpenInstallModal?: () => void;
 }
 
 export const QuickActionsFab: React.FC<QuickActionsFabProps> = ({
@@ -46,6 +49,7 @@ export const QuickActionsFab: React.FC<QuickActionsFabProps> = ({
   onToggleSystemLock,
   onAddEmergencyAbsence,
   onNavigateTab,
+  onOpenInstallModal,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [emergencyModalOpen, setEmergencyModalOpen] = useState(false);
@@ -180,6 +184,25 @@ export const QuickActionsFab: React.FC<QuickActionsFabProps> = ({
                 {isSystemLocked ? <Unlock className="w-4 h-4" /> : <Lock className="w-4 h-4" />}
               </div>
             </button>
+
+            {/* Action 4: Download / Pasang Aplikasi */}
+            {onOpenInstallModal && (
+              <button
+                id="fab-download-app-btn"
+                onClick={() => {
+                  setIsOpen(false);
+                  onOpenInstallModal();
+                }}
+                className="flex items-center space-x-3 px-4 py-2.5 rounded-2xl bg-white dark:bg-slate-800 text-slate-800 dark:text-white shadow-xl border border-indigo-200 dark:border-indigo-800 hover:bg-indigo-50/50 dark:hover:bg-indigo-950/30 transition-all cursor-pointer group"
+              >
+                <span className="text-xs font-extrabold whitespace-nowrap text-indigo-950 dark:text-indigo-200">
+                  Download Aplikasi PWA
+                </span>
+                <div className="w-8 h-8 rounded-xl bg-indigo-600 text-white flex items-center justify-center shadow-md shadow-indigo-600/30 group-hover:scale-110 transition-transform">
+                  <Download className="w-4 h-4" />
+                </div>
+              </button>
+            )}
           </div>
         )}
 

@@ -415,6 +415,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
           ))}
         </nav>
 
+        {/* Download / Install PWA Trigger in Sidebar */}
+        {onOpenInstallModal && (
+          <div className="p-3 border-t border-slate-100 bg-slate-50/60">
+            <button
+              id="sidebar-download-app-btn"
+              onClick={() => {
+                onOpenInstallModal();
+                setIsMobileOpen(false);
+              }}
+              className="w-full p-2.5 rounded-xl border border-indigo-200 bg-indigo-50/80 hover:bg-indigo-100 text-indigo-950 flex items-center justify-between group transition-all cursor-pointer text-left shadow-2xs"
+              title="Download & Pasang Aplikasi di HP atau Laptop"
+            >
+              <div className="flex items-center space-x-2.5 min-w-0">
+                <div className="w-7 h-7 rounded-lg bg-indigo-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                  <Download className="w-3.5 h-3.5" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs font-bold text-indigo-950 truncate">Download Aplikasi</p>
+                  <p className="text-[10px] text-indigo-600 truncate">Pasang di Android, iOS, Laptop</p>
+                </div>
+              </div>
+              <Smartphone className="w-4 h-4 text-indigo-500 shrink-0 group-hover:scale-110 transition-transform" />
+            </button>
+          </div>
+        )}
+
         {/* Footer School Info */}
         <div className="p-3 border-t border-slate-100 flex items-center justify-between text-xs">
           <div className="flex items-center space-x-2 min-w-0">

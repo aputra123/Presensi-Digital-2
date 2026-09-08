@@ -4,6 +4,8 @@
  * Completely eliminates black screen issues during preview and photo capture.
  */
 
+import { detectScreenOrientation, CameraOrientationMode, EffectiveOrientation } from './cameraOrientation';
+
 export interface CameraStreamResult {
   stream: MediaStream;
   isSimulated: boolean;
@@ -454,14 +456,22 @@ export const generateRealisticPhoto = (
  */
 export const createSimulatedCameraStream = (
   mode: 'apel' | 'selfie' | 'qr' = 'apel',
-  label: string = 'Kamera Presensi'
+  label: string = 'Kamera Presensi',
+  targetOrientation: EffectiveOrientation = 'landscape'
 ): CameraStreamResult => {
   // Use a persistent offscreen canvas attached to DOM to ensure browser compositing
   const existingCanvas = document.getElementById('ais-simulated-camera-canvas') as HTMLCanvasElement | null;
   const canvas = existingCanvas || document.createElement('canvas');
   canvas.id = 'ais-simulated-camera-canvas';
-  canvas.width = 1280;
-  canvas.height = 960;
+  
+  // Set dimensions based on target orientation for crisp mobile/laptop rendering
+  if (targetOrientation === 'portrait') {
+    canvas.width = 720;
+    canvas.height = 1280;
+  } else {
+    canvas.width = 1280;
+    canvas.height = 720;
+  }
 
   // Ensure canvas is attached so browser compositor active loops render correctly
   if (!document.body.contains(canvas)) {
@@ -552,7 +562,7 @@ export const createSimulatedCameraStream = (
       }
 
       // Simulated QR Card in center
-      const cardW = 380;
+      const cardW = Math.min(380, w * 0.85);
       const cardH = 260;
       const cardX = (w - cardW) / 2;
       const cardY = (h - cardH) / 2;
@@ -572,29 +582,29 @@ export const createSimulatedCameraStream = (
       ctx.fillText('KARTU PRESENSI DIGITAL • SMPN 4 SATAP', cardX + cardW / 2, cardY + 28);
 
       // QR Code block illustration on card
-      const qrBoxSize = 140;
-      const qrBoxX = cardX + 30;
-      const qrBoxY = cardY + 70;
+      const qrBoxSize = 130;
+      const qrBoxX = cardX + 20;
+      const qrBoxY = cardY + 75;
       ctx.fillStyle = '#0f172a';
       ctx.fillRect(qrBoxX, qrBoxY, qrBoxSize, qrBoxSize);
       ctx.fillStyle = '#ffffff';
-      ctx.fillRect(qrBoxX + 10, qrBoxY + 10, 30, 30);
-      ctx.fillRect(qrBoxX + qrBoxSize - 40, qrBoxY + 10, 30, 30);
-      ctx.fillRect(qrBoxX + 10, qrBoxY + qrBoxSize - 40, 30, 30);
+      ctx.fillRect(qrBoxX + 10, qrBoxY + 10, 28, 28);
+      ctx.fillRect(qrBoxX + qrBoxSize - 38, qrBoxY + 10, 28, 28);
+      ctx.fillRect(qrBoxX + 10, qrBoxY + qrBoxSize - 38, 28, 28);
       ctx.fillStyle = '#0f172a';
-      ctx.fillRect(qrBoxX + 18, qrBoxY + 18, 14, 14);
-      ctx.fillRect(qrBoxX + qrBoxSize - 32, qrBoxY + 18, 14, 14);
-      ctx.fillRect(qrBoxX + 18, qrBoxY + qrBoxSize - 32, 14, 14);
+      ctx.fillRect(qrBoxX + 17, qrBoxY + 17, 14, 14);
+      ctx.fillRect(qrBoxX + qrBoxSize - 31, qrBoxY + 17, 14, 14);
+      ctx.fillRect(qrBoxX + 17, qrBoxY + qrBoxSize - 31, 14, 14);
 
       // Details
       ctx.fillStyle = '#0f172a';
-      ctx.font = 'bold 15px sans-serif';
+      ctx.font = 'bold 14px sans-serif';
       ctx.textAlign = 'left';
-      ctx.fillText('NIP / NISN RESMI', cardX + 190, cardY + 100);
-      ctx.font = '13px monospace';
+      ctx.fillText('NIP / NISN RESMI', cardX + 170, cardY + 105);
+      ctx.font = '12px monospace';
       ctx.fillStyle = '#475569';
-      ctx.fillText('IDENTIFIER: 19810315', cardX + 190, cardY + 130);
-      ctx.fillText('STATUS: TERVERIFIKASI', cardX + 190, cardY + 155);
+      ctx.fillText('ID: 19810315', cardX + 170, cardY + 135);
+      ctx.fillText('STATUS: TERVERIFIKASI', cardX + 170, cardY + 160);
 
       // Sweeping Laser Beam
       const scanY = cardY - 20 + ((Math.sin(counter * 0.05) + 1) / 2) * (cardH + 40);
@@ -620,7 +630,7 @@ export const createSimulatedCameraStream = (
       // Grid lines
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
       ctx.lineWidth = 1;
-      for (let x = 0; x < w; x += 160) {
+      for (let x = 0; x < w; x += 120) {
         ctx.beginPath();
         ctx.moveTo(x, 0);
         ctx.lineTo(x, h);
@@ -637,7 +647,7 @@ export const createSimulatedCameraStream = (
       ctx.strokeStyle = 'rgba(99, 102, 241, 0.6)';
       ctx.lineWidth = 4;
       ctx.beginPath();
-      ctx.ellipse(w / 2, h / 2 - 20, 180, 240, 0, 0, Math.PI * 2);
+      ctx.ellipse(w / 2, h / 2 - 20, Math.min(180, w * 0.28), Math.min(240, h * 0.26), 0, 0, Math.PI * 2);
       ctx.stroke();
 
       // Scanning wave
@@ -645,26 +655,27 @@ export const createSimulatedCameraStream = (
       ctx.strokeStyle = '#38bdf8';
       ctx.lineWidth = 3;
       ctx.beginPath();
-      ctx.moveTo(w * 0.32, scanY);
-      ctx.lineTo(w * 0.68, scanY);
+      ctx.moveTo(w * 0.25, scanY);
+      ctx.lineTo(w * 0.75, scanY);
       ctx.stroke();
     }
 
     // Top HUD Watermark Tag
+    const tagW = Math.min(w - 80, 520);
     ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
-    ctx.fillRect(40, 40, 520, 80);
+    ctx.fillRect(40, 40, tagW, 75);
     ctx.strokeStyle = '#38bdf8';
     ctx.lineWidth = 1.5;
-    ctx.strokeRect(40, 40, 520, 80);
+    ctx.strokeRect(40, 40, tagW, 75);
 
     ctx.fillStyle = '#38bdf8';
-    ctx.font = 'bold 19px monospace';
+    ctx.font = 'bold 16px monospace';
     ctx.textAlign = 'left';
-    ctx.fillText(`● LIVE FEED: ${label.toUpperCase()}`, 60, 72);
+    ctx.fillText(`● LIVE FEED: ${label.toUpperCase()} [${targetOrientation === 'portrait' ? 'POTRET 📱' : 'LANSKAP 💻'}]`, 55, 70);
     ctx.fillStyle = '#ffffff';
-    ctx.font = '15px monospace';
+    ctx.font = '13px monospace';
     const timeNow = new Date().toLocaleTimeString('id-ID', { hour12: false });
-    ctx.fillText(`${timeNow} WITA • SMPN 4 SATAP TALIABU`, 60, 102);
+    ctx.fillText(`${timeNow} WITA • SMPN 4 SATAP TALIABU`, 55, 96);
 
     animationFrameId = requestAnimationFrame(drawFrame);
   };
@@ -707,42 +718,90 @@ export const createSimulatedCameraStream = (
 };
 
 /**
- * Attempts real media devices with progressive fallbacks
+ * Attempts real media devices with progressive fallbacks and automatic/manual Landscape & Portrait support.
+ * Tailored for all smartphone models (Android/iOS) and all laptop types.
  */
 export const getResilientCameraStream = async (
   preferredFacing: 'user' | 'environment' = 'user',
   deviceId?: string,
-  mode: 'apel' | 'selfie' | 'qr' = 'apel'
+  mode: 'apel' | 'selfie' | 'qr' = 'apel',
+  orientation?: CameraOrientationMode
 ): Promise<CameraStreamResult> => {
+  // Determine effective orientation (landscape or portrait)
+  const effectiveOri: EffectiveOrientation =
+    orientation === 'landscape' || orientation === 'portrait'
+      ? orientation
+      : detectScreenOrientation();
+
   if (typeof navigator === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     console.warn('getUserMedia unsupported, fallback to simulated sensor stream');
-    return createSimulatedCameraStream(mode, 'Sensor Presensi');
+    return createSimulatedCameraStream(mode, 'Sensor Presensi', effectiveOri);
   }
 
-  // List of constraints from specific to relaxed
+  // Orientation-adaptive progressive constraint list
   const constraintList: MediaStreamConstraints[] = [];
 
-  if (deviceId) {
-    constraintList.push({
-      video: { deviceId: { exact: deviceId }, width: { ideal: 1280 }, height: { ideal: 960 } },
-      audio: false,
-    });
-  }
-
-  constraintList.push(
-    {
-      video: { facingMode: preferredFacing, width: { ideal: 1280 }, height: { ideal: 960 } },
-      audio: false,
-    },
-    {
-      video: { facingMode: preferredFacing === 'user' ? 'environment' : 'user' },
-      audio: false,
-    },
-    {
-      video: true,
-      audio: false,
+  if (effectiveOri === 'portrait') {
+    // Mobile / Smartphone vertical portrait prioritized
+    if (deviceId) {
+      constraintList.push({
+        video: { deviceId: { exact: deviceId }, width: { ideal: 720 }, height: { ideal: 1280 }, aspectRatio: { ideal: 0.5625 } },
+        audio: false,
+      });
     }
-  );
+    constraintList.push(
+      {
+        video: { facingMode: preferredFacing, width: { ideal: 720 }, height: { ideal: 1280 }, aspectRatio: { ideal: 0.5625 } },
+        audio: false,
+      },
+      {
+        video: { facingMode: preferredFacing, width: { ideal: 720 }, height: { ideal: 960 }, aspectRatio: { ideal: 0.75 } },
+        audio: false,
+      },
+      {
+        video: { facingMode: preferredFacing },
+        audio: false,
+      },
+      {
+        video: { facingMode: preferredFacing === 'user' ? 'environment' : 'user' },
+        audio: false,
+      },
+      {
+        video: true,
+        audio: false,
+      }
+    );
+  } else {
+    // Laptop / Desktop horizontal landscape prioritized
+    if (deviceId) {
+      constraintList.push({
+        video: { deviceId: { exact: deviceId }, width: { ideal: 1280 }, height: { ideal: 720 }, aspectRatio: { ideal: 1.777 } },
+        audio: false,
+      });
+    }
+    constraintList.push(
+      {
+        video: { facingMode: preferredFacing, width: { ideal: 1280 }, height: { ideal: 720 }, aspectRatio: { ideal: 1.777 } },
+        audio: false,
+      },
+      {
+        video: { facingMode: preferredFacing, width: { ideal: 1280 }, height: { ideal: 960 }, aspectRatio: { ideal: 1.333 } },
+        audio: false,
+      },
+      {
+        video: { facingMode: preferredFacing },
+        audio: false,
+      },
+      {
+        video: { facingMode: preferredFacing === 'user' ? 'environment' : 'user' },
+        audio: false,
+      },
+      {
+        video: true,
+        audio: false,
+      }
+    );
+  }
 
   let lastCaughtError: any = null;
   let isLocked = false;
@@ -755,7 +814,7 @@ export const getResilientCameraStream = async (
         return {
           stream,
           isSimulated: false,
-          deviceLabel: track.label || 'Kamera Hardware Aktif',
+          deviceLabel: track.label || `Kamera Hardware Aktif (${effectiveOri === 'portrait' ? 'Potret 📱' : 'Lanskap 💻'})`,
         };
       }
     } catch (e: any) {
@@ -778,13 +837,14 @@ export const getResilientCameraStream = async (
   console.info('Physical camera stream unavailable; activating verified simulated viewfinder');
   const simResult = createSimulatedCameraStream(
     mode,
-    preferredFacing === 'user' ? 'Kamera Depan' : 'Kamera Belakang'
+    preferredFacing === 'user' ? 'Kamera Depan' : 'Kamera Belakang',
+    effectiveOri
   );
 
   return {
     ...simResult,
     errorDetail: lastCaughtError ? `${lastCaughtError.name || 'Error'}: ${lastCaughtError.message || String(lastCaughtError)}` : undefined,
-    deviceLabel: 'Simulasi Sensor Optik Anti-Blackscreen',
+    deviceLabel: `Simulasi Sensor Optik Anti-Blackscreen (${effectiveOri === 'portrait' ? 'Potret' : 'Lanskap'})`,
     isLockedByOtherProcess: isLocked,
   };
 };
@@ -798,7 +858,8 @@ export const softResetCamera = async (
   video: HTMLVideoElement | null,
   currentStream: MediaStream | null,
   preferredFacing: 'user' | 'environment' = 'user',
-  mode: 'apel' | 'selfie' | 'qr' = 'apel'
+  mode: 'apel' | 'selfie' | 'qr' = 'apel',
+  orientation?: CameraOrientationMode
 ): Promise<CameraStreamResult> => {
   console.info('[CameraRecovery] Initiating soft reset of camera hardware...');
 
@@ -825,8 +886,8 @@ export const softResetCamera = async (
   // 3. Hardware bus settling delay
   await new Promise((resolve) => setTimeout(resolve, 300));
 
-  // 4. Re-request camera stream with progressive fallback
-  const freshResult = await getResilientCameraStream(preferredFacing, undefined, mode);
+  // 4. Re-request camera stream with progressive fallback and orientation awareness
+  const freshResult = await getResilientCameraStream(preferredFacing, undefined, mode, orientation);
 
   // 5. Attach fresh stream
   if (video && freshResult.stream) {

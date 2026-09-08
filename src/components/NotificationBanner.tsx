@@ -24,6 +24,8 @@ import {
   Radio,
   Wifi,
   WifiOff,
+  Download,
+  Smartphone,
 } from 'lucide-react';
 import { ActiveTab, LeaveRequest, SchoolConfig, ToastNotification, UserRole } from '../types';
 
@@ -214,6 +216,20 @@ export const NotificationBanner: React.FC<NotificationBannerProps> = ({
                 : 'Guru / GTK'}
             </span>
           </div>
+
+          {/* Download & Install App Button */}
+          {onOpenInstallModal && (
+            <button
+              id="header-download-app-btn"
+              onClick={onOpenInstallModal}
+              className="flex items-center space-x-1.5 px-2.5 py-1 rounded-lg bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 text-indigo-700 text-xs font-bold transition-colors cursor-pointer"
+              title="Download & Pasang Aplikasi di HP / Laptop (PWA)"
+            >
+              <Download className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+              <span className="hidden sm:inline">Download App</span>
+              <span className="sm:hidden text-[11px]">Download</span>
+            </button>
+          )}
 
           {/* Notification Center Trigger Bell */}
           <div className="relative">

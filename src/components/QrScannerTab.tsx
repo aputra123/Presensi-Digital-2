@@ -57,6 +57,7 @@ import {
   CameraDiagnosticState,
 } from '../utils/cameraStream';
 import { CameraDiagnosticOverlay } from './CameraDiagnosticOverlay';
+import { useCameraOrientation, CameraOrientationSelector } from '../utils/cameraOrientation';
 import { createDynamicQrString, validateQrCodeSecurity } from '../utils/qrSecurity';
 import jsQR from 'jsqr';
 
@@ -153,6 +154,10 @@ export const QrScannerTab: React.FC<QrScannerTabProps> = ({
   const [dynamicTimeLeft, setDynamicTimeLeft] = useState<number>(60);
   const [copiedToken, setCopiedToken] = useState(false);
 
+  // Camera Orientation & Auto Landscape/Portrait for Mobile Phones and Laptops
+  const cameraOri = useCameraOrientation('auto', 'ais_qr_orientation_mode');
+  const prevOriRef = useRef(cameraOri.effectiveOrientation);
+
   // Camera Diagnostic & Health Recovery State
   const [cameraDiagnostic, setCameraDiagnostic] = useState<CameraDiagnosticState>({
     isActive: false,
@@ -165,7 +170,7 @@ export const QrScannerTab: React.FC<QrScannerTabProps> = ({
   // Soft Reset Camera Handler
   const handleSoftReset = async () => {
     try {
-      const res = await softResetCamera(videoRef.current, streamRef.current, facingMode, 'qr');
+      const res = await softResetCamera(videoRef.current, streamRef.current, facingMode, 'qr', cameraOri.mode);
       streamRef.current = res.stream;
       if (res.cleanup) simCleanupRef.current = res.cleanup;
       setCameraDiagnostic((prev) => ({
@@ -194,7 +199,7 @@ export const QrScannerTab: React.FC<QrScannerTabProps> = ({
     }
 
     try {
-      const res = await getResilientCameraStream(targetFacing, undefined, 'qr');
+      const res = await getResilientCameraStream(targetFacing, undefined, 'qr', cameraOri.mode);
       streamRef.current = res.stream;
       if (res.cleanup) {
         simCleanupRef.current = res.cleanup;
@@ -221,6 +226,15 @@ export const QrScannerTab: React.FC<QrScannerTabProps> = ({
       }));
     }
   };
+
+  // Automatically update camera stream and viewfinder aspect ratio when device orientation changes
+  useEffect(() => {
+    if (isCameraLive && prevOriRef.current !== cameraOri.effectiveOrientation) {
+      prevOriRef.current = cameraOri.effectiveOrientation;
+      startCamera(facingMode);
+    }
+    prevOriRef.current = cameraOri.effectiveOrientation;
+  }, [cameraOri.effectiveOrientation, isCameraLive, facingMode]);
 
   // Continuous Camera Stream & Black Frame Health Monitor
   useEffect(() => {
@@ -912,10 +926,17 @@ export const QrScannerTab: React.FC<QrScannerTabProps> = ({
             onTriggerSoftReset={handleSoftReset}
             preferredFacing={facingMode}
             modeTitle="Pemindai Barcode / QR Presensi"
+            orientationMode={cameraOri.mode}
+            effectiveOrientation={cameraOri.effectiveOrientation}
+            deviceCategory={cameraOri.deviceCategory}
+            onCycleOrientation={cameraOri.cycleOrientation}
           />
 
-          {/* Real/Resilient Live Camera Viewfinder (Never Black Screen) */}
-          <div className="relative aspect-[4/3] rounded-[2.5rem] bg-slate-950 overflow-hidden border-2 border-slate-800 flex flex-col items-center justify-center text-white shadow-lg">
+          {/* Real/Resilient Live Camera Viewfinder (Never Black Screen) - Responsive Auto Landscape/Portrait */}
+          <div
+            className={`relative transition-all duration-300 rounded-[2.5rem] bg-slate-950 overflow-hidden border-2 border-slate-800 flex flex-col items-center justify-center text-white shadow-lg ${cameraOri.aspectClass}`}
+            style={cameraOri.containerStyle}
+          >
             {/* Live Video Tag connected to resilient camera stream */}
             <video
               ref={(el) => {
@@ -948,8 +969,17 @@ export const QrScannerTab: React.FC<QrScannerTabProps> = ({
               </div>
             </div>
 
-            {/* Camera Controls Overlay */}
+            {/* Camera Controls Overlay with Orientation Selector */}
             <div className="absolute top-3 right-3 flex items-center space-x-2 z-10">
+              <CameraOrientationSelector
+                mode={cameraOri.mode}
+                effectiveOrientation={cameraOri.effectiveOrientation}
+                deviceCategory={cameraOri.deviceCategory}
+                onCycle={cameraOri.cycleOrientation}
+                onSelect={cameraOri.setMode}
+                isCompact
+              />
+
               <button
                 type="button"
                 onClick={toggleFacing}
@@ -957,7 +987,7 @@ export const QrScannerTab: React.FC<QrScannerTabProps> = ({
                 title="Ganti Kamera Depan/Belakang"
               >
                 <RefreshCw className="w-3.5 h-3.5" />
-                <span className="text-[11px]">{facingMode === 'user' ? 'Kamera Depan' : 'Kamera Belakang'}</span>
+                <span className="text-[11px] hidden sm:inline">{facingMode === 'user' ? 'Kamera Depan' : 'Kamera Belakang'}</span>
               </button>
             </div>
 

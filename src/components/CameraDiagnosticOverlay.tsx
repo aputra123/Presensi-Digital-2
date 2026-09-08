@@ -9,8 +9,10 @@ import {
   Laptop,
   Maximize2,
   RefreshCw,
+  RotateCw,
   ShieldAlert,
   ShieldCheck,
+  Smartphone,
   Video,
   X,
 } from 'lucide-react';
@@ -19,6 +21,11 @@ import {
   PreflightHardwareCheckResult,
   runPreflightHardwareCheck,
 } from '../utils/cameraStream';
+import {
+  CameraOrientationMode,
+  EffectiveOrientation,
+  DeviceCategory,
+} from '../utils/cameraOrientation';
 
 interface CameraDiagnosticOverlayProps {
   diagnostic: CameraDiagnosticState;
@@ -26,6 +33,10 @@ interface CameraDiagnosticOverlayProps {
   preferredFacing?: 'user' | 'environment';
   modeTitle?: string;
   isCompact?: boolean;
+  orientationMode?: CameraOrientationMode;
+  effectiveOrientation?: EffectiveOrientation;
+  deviceCategory?: DeviceCategory;
+  onCycleOrientation?: () => void;
 }
 
 export const CameraDiagnosticOverlay: React.FC<CameraDiagnosticOverlayProps> = ({
@@ -34,6 +45,10 @@ export const CameraDiagnosticOverlay: React.FC<CameraDiagnosticOverlayProps> = (
   preferredFacing = 'user',
   modeTitle = 'Kamera Presensi',
   isCompact = false,
+  orientationMode,
+  effectiveOrientation,
+  deviceCategory,
+  onCycleOrientation,
 }) => {
   const [isOpen, setIsOpen] = useState<boolean>(false);
   const [isTestingHardware, setIsTestingHardware] = useState<boolean>(false);
@@ -83,6 +98,27 @@ export const CameraDiagnosticOverlay: React.FC<CameraDiagnosticOverlayProps> = (
         </div>
 
         <div className="flex items-center space-x-1.5">
+          {onCycleOrientation && effectiveOrientation && (
+            <button
+              type="button"
+              onClick={onCycleOrientation}
+              title={`Rotasi Kamera: ${
+                orientationMode === 'auto' ? 'Otomatis' : orientationMode === 'landscape' ? 'Lanskap' : 'Potret'
+              } (${effectiveOrientation === 'portrait' ? 'Potret 📱' : 'Lanskap 💻'}). Klik untuk ubah (Auto ➔ Lanskap ➔ Potret)`}
+              className="flex items-center space-x-1 px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-[10px] font-bold transition-colors cursor-pointer border border-slate-700/60"
+            >
+              {effectiveOrientation === 'portrait' ? (
+                <Smartphone className="w-3 h-3 text-indigo-400" />
+              ) : (
+                <Laptop className="w-3 h-3 text-emerald-400" />
+              )}
+              <span className="hidden xs:inline sm:inline">
+                {orientationMode === 'auto' ? 'Auto: ' : ''}
+                {effectiveOrientation === 'portrait' ? 'Potret' : 'Lanskap'}
+              </span>
+            </button>
+          )}
+
           <button
             type="button"
             onClick={onTriggerSoftReset}
@@ -195,6 +231,40 @@ export const CameraDiagnosticOverlay: React.FC<CameraDiagnosticOverlayProps> = (
                 {diagnostic.isLockedByOtherProcess ? 'Terdeteksi Aktif' : 'Bebas Kunci (Aman)'}
               </span>
             </div>
+
+            {effectiveOrientation && (
+              <div className="p-2 bg-slate-950/60 rounded-xl border border-slate-800 col-span-2 flex items-center justify-between">
+                <div>
+                  <span className="text-slate-400 text-[10px] block font-medium">Orientasi Kamera (Auto HP & Laptop)</span>
+                  <span className="font-bold text-slate-200 text-xs flex items-center space-x-1.5 mt-0.5">
+                    {effectiveOrientation === 'portrait' ? (
+                      <>
+                        <Smartphone className="w-3.5 h-3.5 text-indigo-400" />
+                        <span>Potret Tegak (9:16 / 3:4)</span>
+                      </>
+                    ) : (
+                      <>
+                        <Laptop className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>Lanskap Mendatar (16:9 / 4:3)</span>
+                      </>
+                    )}
+                    <span className="text-[10px] text-slate-400 font-normal">
+                      • {orientationMode === 'auto' ? 'Mode Otomatis Sensor' : 'Terkunci Manual'}
+                    </span>
+                  </span>
+                </div>
+                {onCycleOrientation && (
+                  <button
+                    type="button"
+                    onClick={onCycleOrientation}
+                    className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[10px] flex items-center space-x-1 cursor-pointer"
+                  >
+                    <RotateCw className="w-3 h-3" />
+                    <span>Rotasi</span>
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Device Hardware Label */}

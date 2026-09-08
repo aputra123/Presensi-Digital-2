@@ -1917,6 +1917,7 @@ export default function App() {
           onToggleSystemLock={handleToggleSystemLock}
           onAddEmergencyAbsence={handleAddEmergencyAbsence}
           onNavigateTab={setActiveTab}
+          onOpenInstallModal={() => setIsInstallModalOpen(true)}
         />
 
         {/* Offline & Blankspot Synchronizer Modal */}
