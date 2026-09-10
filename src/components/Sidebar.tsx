@@ -74,14 +74,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onTriggerSimulation,
   onOpenInstallModal,
 }) => {
-  const isAutomationAdmin = userRole === 'admin' || userRole === 'bkd_staff' || userRole === 'bkd';
-
-  const isRestrictedRole =
-    userRole === 'kepala_sekolah' ||
-    userRole === 'bkd_staff' ||
-    userRole === 'bkd' ||
-    userRole === 'teacher' ||
-    userRole === 'piket';
+  const isRestrictedRole = userRole !== 'admin';
 
   const menuGroups = [
     {
@@ -115,7 +108,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       ],
     },
     {
-      groupTitle: 'MANAJEMEN & LAYANAN',
+      groupTitle: 'MANAJEMEN LAYANAN',
       items: [
         {
           id: 'layanan_gtk' as ActiveTab,
@@ -265,12 +258,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* Minimalist Role Selector */}
         <div className="p-3 mx-3 my-2 rounded-xl bg-slate-50 border border-slate-200/70 space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-[10px] font-medium text-slate-400 uppercase tracking-wider flex items-center space-x-1">
-              <span>Akses Role</span>
-              {hasClaim('admin_access', session) && (
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" title="Sesi Berbasis Token Aktif" />
-              )}
-            </span>
+            <div className="flex flex-col">
+              <span className="text-[10px] font-medium text-slate-400 uppercase tracking-wider flex items-center space-x-1">
+                <span>Akses Role</span>
+                {hasClaim('admin_access', session) && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" title="Sesi Berbasis Token Aktif" />
+                )}
+              </span>
+              <span className="text-[9px] text-slate-500 font-medium">
+                {isRestrictedRole ? 'Presensi & Layanan' : 'Akses Penuh Sistem'}
+              </span>
+            </div>
             <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-md border ${
               hasClaim('admin_access', session)
                 ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
@@ -319,7 +317,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   ? 'bg-white text-slate-900 shadow-2xs font-semibold'
                   : 'text-slate-500 hover:text-slate-900'
               }`}
-              title="Kepala Sekolah / Pejabat Penilai Kinerja"
+              title="Kepala Sekolah - Akses: Presensi & Manajemen Layanan"
             >
               Kepsek
             </button>
@@ -337,7 +335,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   ? 'bg-white text-slate-900 shadow-2xs font-semibold'
                   : 'text-slate-500 hover:text-slate-900'
               }`}
-              title="Auditor / Staf BKD Pulau Taliabu"
+              title="Auditor BKD - Akses: Presensi & Manajemen Layanan"
             >
               BKD
             </button>
@@ -355,18 +353,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   ? 'bg-white text-slate-900 shadow-2xs font-semibold'
                   : 'text-slate-500 hover:text-slate-900'
               }`}
-              title="Guru / Tenaga Kependidikan"
+              title="Guru & Tenaga Kependidikan - Akses: Presensi & Manajemen Layanan"
             >
               Guru
             </button>
           </div>
         </div>
 
-        {/* Navigation List - Role kepsek, BKD dan Guru hanya menampilkan bagian presensi dan manajemen & layanan */}
+        {/* Navigation List - Role kepsek, BKD dan Guru/GTK hanya menampilkan bagian presensi dan manajemen layanan */}
         <nav className="flex-1 overflow-y-auto px-3 py-2 space-y-3">
           {(isRestrictedRole
             ? menuGroups.filter(
-                (g) => g.groupTitle === 'PRESENSI' || g.groupTitle === 'MANAJEMEN & LAYANAN'
+                (g) => g.groupTitle === 'PRESENSI' || g.groupTitle === 'MANAJEMEN LAYANAN'
               )
             : menuGroups
           ).map((group, gIdx) => (

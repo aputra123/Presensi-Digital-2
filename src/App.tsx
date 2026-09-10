@@ -278,26 +278,25 @@ export default function App() {
     }).catch((err) => console.warn('Remote session verification notice:', err));
   }, []);
 
-  // Enforce role-based tab restriction: Kepsek, BKD, and Guru only see Presensi & Manajemen/Layanan
-  useEffect(() => {
-    const isRestrictedRole =
-      userRole === 'kepala_sekolah' ||
-      userRole === 'bkd_staff' ||
-      userRole === 'bkd' ||
-      userRole === 'teacher' ||
-      userRole === 'piket';
+  // Enforce role-based tab restriction: Kepsek, BKD, and Guru/GTK only display Presensi & Manajemen Layanan
+  const ALLOWED_PRESENSI_AND_LAYANAN_TABS: ActiveTab[] = [
+    // Bagian Presensi
+    'dashboard',
+    'scan',
+    'selfie',
+    'tabel_absensi_asn',
+    'rekap',
+    // Bagian Manajemen Layanan
+    'layanan_gtk',
+    'teachers',
+    'duty_roster',
+    'calendar',
+  ];
 
-    if (isRestrictedRole) {
-      const restrictedTabs: ActiveTab[] = [
-        'bkd_automation',
-        'logs',
-        'config',
-        'workspace',
-        'biometric_logs',
-      ];
-      if (restrictedTabs.includes(activeTab)) {
-        setActiveTab('dashboard');
-      }
+  useEffect(() => {
+    const isRestrictedRole = userRole !== 'admin';
+    if (isRestrictedRole && !ALLOWED_PRESENSI_AND_LAYANAN_TABS.includes(activeTab)) {
+      setActiveTab('dashboard');
     }
   }, [userRole, activeTab]);
 
