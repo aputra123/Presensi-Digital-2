@@ -1,24 +1,21 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   X,
   PenTool,
-  Smartphone,
-  Laptop,
-  Clock,
-  Sparkles,
-  Award,
+  Loader2,
 } from 'lucide-react';
 import { SignaturePad } from './SignaturePad';
 
 interface SignaturePadModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (signatureDataUrl: string, timestamp: string) => void;
+  onSave: (signatureDataUrl: string, timestamp: string) => Promise<void> | void;
   initialSignature?: string;
   teacherName: string;
   nip: string;
   sessionType: 'masuk' | 'pulang';
   dateStr?: string;
+  isSaving?: boolean;
 }
 
 export const SignaturePadModal: React.FC<SignaturePadModalProps> = ({
@@ -30,21 +27,50 @@ export const SignaturePadModal: React.FC<SignaturePadModalProps> = ({
   nip,
   sessionType,
   dateStr,
+  isSaving: externalIsSaving = false,
 }) => {
+  const [internalSaving, setInternalSaving] = useState(false);
+  const isSaving = externalIsSaving || internalSaving;
+
   if (!isOpen) return null;
 
   const isMasuk = sessionType === 'masuk';
   const sessionLabel = isMasuk ? 'Absen Masuk' : 'Absen Pulang';
 
+  const handleSaveSignature = async (signatureDataUrl: string, timestamp: string) => {
+    setInternalSaving(true);
+    try {
+      // Ensure the sync promise completely resolves before unmounting canvas
+      await Promise.resolve(onSave(signatureDataUrl, timestamp));
+      // Safely close only after sync promise resolves
+      onClose();
+    } finally {
+      setInternalSaving(false);
+    }
+  };
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-xs animate-in fade-in duration-200 overflow-y-auto"
-      onClick={onClose}
+      onClick={() => !isSaving && onClose()}
     >
       <div
         className="relative w-full max-w-xl bg-white rounded-3xl shadow-2xl overflow-hidden border border-slate-200 my-auto animate-in zoom-in-95 duration-150"
         onClick={(e) => e.stopPropagation()}
       >
+        {/* Loading Overlay during Save Sync */}
+        {isSaving && (
+          <div className="absolute inset-0 z-30 bg-slate-950/40 backdrop-blur-xs flex flex-col items-center justify-center gap-3 text-white animate-in fade-in">
+            <div className="p-4 bg-slate-900/90 rounded-2xl border border-white/20 shadow-2xl flex flex-col items-center gap-2.5">
+              <Loader2 className="w-8 h-8 text-indigo-400 animate-spin" />
+              <div className="text-center">
+                <p className="text-xs font-bold text-white">Menyimpan Tanda Tangan ASN...</p>
+                <p className="text-[11px] text-slate-300">Sinkronisasi log audit & presensi elektronik</p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Modal Top Header */}
         <div className="p-4 sm:p-5 bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white flex items-center justify-between border-b border-indigo-900/40">
           <div className="flex items-center space-x-3">
@@ -80,8 +106,9 @@ export const SignaturePadModal: React.FC<SignaturePadModalProps> = ({
           </div>
 
           <button
-            onClick={onClose}
-            className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+            onClick={() => !isSaving && onClose()}
+            disabled={isSaving}
+            className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/10 disabled:opacity-30 transition-colors cursor-pointer"
             aria-label="Tutup"
           >
             <X className="w-5 h-5" />
@@ -92,11 +119,9 @@ export const SignaturePadModal: React.FC<SignaturePadModalProps> = ({
         <div className="p-4 sm:p-5 bg-slate-50/50">
           <SignaturePad
             initialSignature={initialSignature}
-            onSave={(dataUrl, time) => {
-              onSave(dataUrl, time);
-              onClose();
-            }}
-            onCancel={onClose}
+            onSave={handleSaveSignature}
+            onCancel={() => !isSaving && onClose()}
+            isSaving={isSaving}
             height={240}
             defaultColor={isMasuk ? '#1D4ED8' : '#0F172A'}
             defaultLineWidth={3.2}

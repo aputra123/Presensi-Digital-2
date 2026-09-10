@@ -10,13 +10,20 @@
 // Strip HTML tags, script elements, javascript: protocols, and null bytes
 export function stripMaliciousCharacters(input: string): string {
   if (typeof input !== 'string') return '';
+  
+  // Safe handling for valid base64 image data URLs (signatures, biometric photos, avatars)
+  if (/^data:image\/(png|jpeg|jpg|webp|svg\+xml);base64,/i.test(input)) {
+    // Strip null bytes and ensure no embedded script tags
+    return input.replace(/\0/g, '').replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '').trim();
+  }
+
   return input
     .replace(/\0/g, '') // Null bytes
     .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '') // Script blocks
     .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '') // Style blocks
     .replace(/<[^>]+>/g, '') // All other HTML tags
     .replace(/javascript:/gi, '') // Javascript pseudo-protocol
-    .replace(/data:/gi, 'data_') // Prevent inline executable data schemes in text
+    .replace(/data:(?!image\/(?:png|jpeg|jpg|webp);base64,)/gi, 'data_') // Prevent inline executable data schemes in text, allow image data URLs
     .replace(/on\w+\s*=/gi, '') // Event handlers like onload=, onerror=
     .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '') // Control characters except newline and tab
     .trim();

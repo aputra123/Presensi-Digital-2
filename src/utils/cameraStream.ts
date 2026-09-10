@@ -89,22 +89,12 @@ export const runPreflightHardwareCheck = async (
         deviceId: d.deviceId,
         label: d.label || `Modul Sensor Kamera #${idx + 1}`,
       }));
-
-    if (videoDevices.length === 0) {
-      return {
-        canAccess: false,
-        status: 'no_device',
-        message: 'Tidak ada perangkat keras kamera (webcam/sensor) yang terpasang.',
-        actionHint: 'Pastikan modul webcam atau sensor kamera aktif dan terpasang dengan baik pada perangkat Anda.',
-        videoDevices: [],
-      };
-    }
   } catch (e: any) {
-    console.warn('enumerateDevices error:', e);
+    console.warn('enumerateDevices notice (normal before permission prompt):', e);
   }
 
   // 3. Pre-flight check based on permission and device availability
-  // (Avoid opening and immediately killing a test stream, which creates race conditions on mobile/tablets)
+  // Note: Modern browsers hide device labels and may report empty device list until getUserMedia() is called once.
   return {
     canAccess: true,
     status: 'granted',
@@ -151,8 +141,8 @@ export const isFrameBlack = (
     if (sampledCount === 0) return true;
     const avgBrightness = totalBrightness / sampledCount;
 
-    // Anything below 6 is effectively pitch black darkness
-    return avgBrightness < 6;
+    // Only consider frame black if sensor output is near total pitch black (e.g. capped lens or empty frame buffer)
+    return avgBrightness < 2.5;
   } catch (e) {
     // If security error (tainted canvas) or unexpected error, assume not black
     return false;
@@ -673,70 +663,47 @@ export const getResilientCameraStream = async (
     return createSimulatedCameraStream(mode, 'Sensor Presensi', effectiveOri);
   }
 
-  // Orientation-adaptive progressive constraint list
+  // Progressive constraint list with ideal preferences
   const constraintList: MediaStreamConstraints[] = [];
 
-  if (effectiveOri === 'portrait') {
-    // Mobile / Smartphone vertical portrait prioritized
-    if (deviceId) {
-      constraintList.push({
-        video: { deviceId: { exact: deviceId }, width: { ideal: 720 }, height: { ideal: 1280 }, aspectRatio: { ideal: 0.5625 } },
-        audio: false,
-      });
-    }
-    constraintList.push(
-      {
-        video: { facingMode: preferredFacing, width: { ideal: 720 }, height: { ideal: 1280 }, aspectRatio: { ideal: 0.5625 } },
-        audio: false,
-      },
-      {
-        video: { facingMode: preferredFacing, width: { ideal: 720 }, height: { ideal: 960 }, aspectRatio: { ideal: 0.75 } },
-        audio: false,
-      },
-      {
-        video: { facingMode: preferredFacing },
-        audio: false,
-      },
-      {
-        video: { facingMode: preferredFacing === 'user' ? 'environment' : 'user' },
-        audio: false,
-      },
-      {
-        video: true,
-        audio: false,
-      }
-    );
-  } else {
-    // Laptop / Desktop horizontal landscape prioritized
-    if (deviceId) {
-      constraintList.push({
-        video: { deviceId: { exact: deviceId }, width: { ideal: 1280 }, height: { ideal: 720 }, aspectRatio: { ideal: 1.777 } },
-        audio: false,
-      });
-    }
-    constraintList.push(
-      {
-        video: { facingMode: preferredFacing, width: { ideal: 1280 }, height: { ideal: 720 }, aspectRatio: { ideal: 1.777 } },
-        audio: false,
-      },
-      {
-        video: { facingMode: preferredFacing, width: { ideal: 1280 }, height: { ideal: 960 }, aspectRatio: { ideal: 1.333 } },
-        audio: false,
-      },
-      {
-        video: { facingMode: preferredFacing },
-        audio: false,
-      },
-      {
-        video: { facingMode: preferredFacing === 'user' ? 'environment' : 'user' },
-        audio: false,
-      },
-      {
-        video: true,
-        audio: false,
-      }
-    );
+  if (deviceId) {
+    constraintList.push({
+      video: { deviceId: { ideal: deviceId } },
+      audio: false,
+    });
   }
+
+  // 1. Preferred facing mode with ideal resolution
+  constraintList.push({
+    video: {
+      facingMode: { ideal: preferredFacing },
+      width: { ideal: effectiveOri === 'portrait' ? 720 : 1280 },
+      height: { ideal: effectiveOri === 'portrait' ? 1280 : 720 },
+    },
+    audio: false,
+  });
+
+  // 2. Preferred facing mode unconstrained
+  constraintList.push({
+    video: {
+      facingMode: { ideal: preferredFacing },
+    },
+    audio: false,
+  });
+
+  // 3. Alternative facing mode (e.g. front camera if rear not present on laptop)
+  constraintList.push({
+    video: {
+      facingMode: { ideal: preferredFacing === 'user' ? 'environment' : 'user' },
+    },
+    audio: false,
+  });
+
+  // 4. Guaranteed universal fallback (any available webcam hardware)
+  constraintList.push({
+    video: true,
+    audio: false,
+  });
 
   let lastCaughtError: any = null;
   let isLocked = false;
@@ -850,7 +817,7 @@ export const startCameraHealthMonitor = (
   let mutedStrikeCount = 0;
   let isTriggered = false;
   const startTime = Date.now();
-  const GRACE_PERIOD_MS = 3500; // Allow 3.5s warm-up period for mobile cameras to initialize sensors and auto-exposure
+  const GRACE_PERIOD_MS = 6000; // Allow 6s warm-up period for webcams and mobile cameras to initialize sensors and auto-exposure
 
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
@@ -871,10 +838,10 @@ export const startCameraHealthMonitor = (
       return;
     }
 
-    // Muted tracks: require 3 consecutive strikes as mobile browsers momentarily mute during app transitions
+    // Muted tracks: require 4 consecutive strikes as mobile browsers momentarily mute during app transitions
     if (tracks.some((t) => t.muted)) {
       mutedStrikeCount++;
-      if (mutedStrikeCount >= 3) {
+      if (mutedStrikeCount >= 4) {
         isTriggered = true;
         onBlackDetected('Video track dalam status muted berkepanjangan oleh browser/hardware.');
       }
@@ -888,7 +855,7 @@ export const startCameraHealthMonitor = (
       const vh = video.videoHeight;
       if (vw <= 0 || vh <= 0) {
         blackScreenStrikeCount++;
-        if (blackScreenStrikeCount >= 3) {
+        if (blackScreenStrikeCount >= 5) {
           isTriggered = true;
           onBlackDetected('Dimensi video 0x0 (invalid stream frame).');
           blackScreenStrikeCount = 0;
@@ -903,7 +870,7 @@ export const startCameraHealthMonitor = (
         const isBlack = isFrameBlack(ctx, 160, 120);
         if (isBlack) {
           blackScreenStrikeCount++;
-          if (blackScreenStrikeCount >= 3) {
+          if (blackScreenStrikeCount >= 5) {
             isTriggered = true;
             onBlackDetected('Layar hitam terdeteksi pada preview kamera.');
             blackScreenStrikeCount = 0;

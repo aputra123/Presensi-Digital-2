@@ -34,7 +34,7 @@ import {
   BiometricLog,
 } from '../types';
 import { playBeepSound, checkDateIsHoliday } from '../utils/soundAndDate';
-import { CalendarOff, Lock, Unlock, Map, Navigation as NavIcon, LocateFixed } from 'lucide-react';
+import { CalendarOff, Lock, Unlock, Map, Navigation as NavIcon, LocateFixed, ShieldAlert, VideoOff } from 'lucide-react';
 import { GoogleMapsGeofence, calculateDistanceMeters } from './GoogleMapsGeofence';
 import {
   getResilientCameraStream,
@@ -90,6 +90,9 @@ export const SelfieGpsTab: React.FC<SelfieGpsTabProps> = ({
   const [cameraDevices, setCameraDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const [isCameraInitializing, setIsCameraInitializing] = useState<boolean>(false);
+  const [cameraPermissionDenied, setCameraPermissionDenied] = useState<boolean>(false);
+  const [cameraRetryAttempts, setCameraRetryAttempts] = useState<number>(0);
 
   // Biometric Face Scan State
   const [isBiometricScanning, setIsBiometricScanning] = useState(false);
@@ -230,16 +233,30 @@ export const SelfieGpsTab: React.FC<SelfieGpsTabProps> = ({
     }
   };
 
-  // Start Camera Stream with Resilient fallback and Landscape/Portrait orientation
-  const startCamera = async (targetFacing: 'user' | 'environment' = 'user') => {
+  // Start Camera Stream with Resilient fallback, robust permission acquisition & automatic retry
+  const startCamera = async (
+    targetFacing: 'user' | 'environment' = 'user',
+    attemptCount: number = 0
+  ) => {
     stopCamera();
     setIsCameraActive(true);
+    setIsCameraInitializing(true);
     setCapturedPhoto(null);
     setCameraError(null);
     setFacingMode(targetFacing);
+    setCameraRetryAttempts(attemptCount);
 
-    // Pre-flight hardware & lock check
+    // 1. Pre-flight hardware & permission check
     const preflight = await runPreflightHardwareCheck(targetFacing);
+    if (preflight.status === 'denied') {
+      setCameraPermissionDenied(true);
+      setCameraError(preflight.message || 'Izin kamera diblokir pada peramban ini.');
+      setIsCameraInitializing(false);
+      return;
+    } else {
+      setCameraPermissionDenied(false);
+    }
+
     if (!preflight.canAccess && preflight.status === 'in_use') {
       setPreflightWarning(preflight);
     } else {
@@ -247,7 +264,16 @@ export const SelfieGpsTab: React.FC<SelfieGpsTabProps> = ({
     }
 
     try {
-      const res = await getResilientCameraStream(targetFacing, selectedDeviceId, 'selfie', cameraOri.mode);
+      // 2. Resilient camera stream acquisition
+      // On retry attempt > 0, fallback by relaxing deviceId constraints to avoid locks on a specific sensor
+      const effectiveDeviceId = attemptCount > 0 ? '' : selectedDeviceId;
+      const res = await getResilientCameraStream(
+        targetFacing,
+        effectiveDeviceId,
+        'selfie',
+        cameraOri.mode
+      );
+
       streamRef.current = res.stream;
       if (res.cleanup) {
         simCleanupRef.current = res.cleanup;
@@ -263,16 +289,40 @@ export const SelfieGpsTab: React.FC<SelfieGpsTabProps> = ({
         trackLabel: res.deviceLabel,
         lastErrorMessage: res.errorDetail,
         isLockedByOtherProcess: res.isLockedByOtherProcess,
-        recoveryCount: 0,
+        recoveryCount: attemptCount,
       });
+      setCameraError(null);
+      setCameraPermissionDenied(false);
     } catch (err: any) {
-      console.warn('Camera stream error:', err);
-      setCameraError(err.message || 'Izin kamera tidak diberikan');
+      console.warn(`Camera stream error (attempt ${attemptCount}):`, err);
+
+      // Automatic fallback: if first attempt failed and not a strict permission denial, attempt auto-fallback
+      const isDenied =
+        err?.name === 'NotAllowedError' ||
+        err?.name === 'PermissionDeniedError' ||
+        err?.message?.toLowerCase().includes('denied') ||
+        err?.message?.toLowerCase().includes('izin');
+
+      if (attemptCount === 0 && !isDenied) {
+        console.log('Initiating automatic fallback camera initialization...');
+        await new Promise((r) => setTimeout(r, 350));
+        return startCamera(targetFacing, attemptCount + 1);
+      }
+
+      setCameraPermissionDenied(isDenied);
+      setCameraError(
+        err?.message ||
+          (isDenied
+            ? 'Akses kamera ditolak. Silakan berikan izin akses kamera pada peramban.'
+            : 'Gagal menginisialisasi kamera. Periksa apakah kamera sedang digunakan aplikasi lain.')
+      );
       setCameraDiagnostic((prev) => ({
         ...prev,
         lastErrorCode: err?.name,
         lastErrorMessage: err?.message,
       }));
+    } finally {
+      setIsCameraInitializing(false);
     }
   };
 
@@ -1090,8 +1140,70 @@ Tercatat resmi dalam Sistem Informasi Kepegawaian & Database Presensi Sekolah.`;
               className={`relative w-full transition-all duration-300 rounded-3xl overflow-hidden bg-slate-950 flex items-center justify-center border-4 border-slate-900 shadow-xl ${cameraOri.aspectClass}`}
               style={cameraOri.containerStyle}
             >
+              {/* Clear Camera Access Required / Permission Denied UI state with Manual Retry */}
+              {(cameraError || cameraPermissionDenied) && (
+                <div className="absolute inset-0 z-30 bg-slate-950/95 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center text-white space-y-4">
+                  <div className="w-16 h-16 rounded-3xl bg-amber-500/20 border border-amber-500/40 text-amber-400 flex items-center justify-center shadow-lg shadow-amber-500/10 animate-pulse">
+                    <Lock className="w-8 h-8" />
+                  </div>
+
+                  <div className="space-y-1.5 max-w-sm">
+                    <div className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full bg-amber-500/20 text-amber-300 text-[11px] font-bold border border-amber-400/30">
+                      <ShieldAlert className="w-3.5 h-3.5" />
+                      <span>Camera Access Required</span>
+                    </div>
+                    <h4 className="font-extrabold text-base text-white pt-1">
+                      Izin Akses Kamera Diperlukan
+                    </h4>
+                    <p className="text-xs text-slate-300 leading-relaxed">
+                      {cameraError ||
+                        'Fitur presensi biometrik wajah memerlukan izin akses ke kamera perangkat Anda untuk validasi kehadiran dinas.'}
+                    </p>
+                  </div>
+
+                  {/* Step-by-step resolution instruction */}
+                  <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 text-left text-[11px] text-slate-300 max-w-xs w-full space-y-1.5">
+                    <p className="font-bold text-slate-200">Langkah mengaktifkan izin:</p>
+                    <ol className="list-decimal list-inside space-y-1 text-slate-400">
+                      <li>Klik ikon gembok 🔒 atau izin situs di bilah alamat URL peramban.</li>
+                      <li>Ubah status <strong>Kamera</strong> menjadi <strong>Izinkan / Allow</strong>.</li>
+                      <li>Klik tombol <strong>Coba Lagi</strong> di bawah.</li>
+                    </ol>
+                  </div>
+
+                  {/* Manual Retry & Recovery Buttons */}
+                  <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => startCamera(facingMode, 0)}
+                      className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold flex items-center space-x-2 transition-all shadow-md shadow-indigo-600/30 active:scale-95 cursor-pointer"
+                    >
+                      <RefreshCw className={`w-4 h-4 ${isCameraInitializing ? 'animate-spin' : ''}`} />
+                      <span>{isCameraInitializing ? 'Memeriksa Kamera...' : 'Coba Lagi Akses Kamera (Manual Retry)'}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleSoftReset}
+                      className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition-all cursor-pointer"
+                    >
+                      <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                      <span>Pulihkan Sensor Kamera</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={stopCamera}
+                      className="px-3 py-2.5 text-slate-400 hover:text-white text-xs font-medium cursor-pointer"
+                    >
+                      Batal
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* Active Video Stream */}
-              {isCameraActive && (
+              {isCameraActive && !cameraError && !cameraPermissionDenied && (
                 <div className="relative w-full h-full">
                   <video
                     ref={(el) => {

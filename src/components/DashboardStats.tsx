@@ -40,6 +40,7 @@ import {
   UserX,
   ScanFace,
   ChevronRight,
+  PenTool,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -2738,14 +2739,25 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
               </button>
             </div>
 
-            <button
-              id="quick-audit-log-btn"
-              onClick={() => navigate('logs')}
-              className="w-full py-1.5 px-3 bg-white hover:bg-slate-50 border border-slate-200 text-slate-600 rounded-lg text-xs font-medium flex items-center justify-center space-x-1.5 transition-colors cursor-pointer"
-            >
-              <History className="w-3.5 h-3.5 text-slate-400" />
-              <span>Audit Log & Riwayat</span>
-            </button>
+            {userRole === 'admin' ? (
+              <button
+                id="quick-audit-log-btn"
+                onClick={() => navigate('logs')}
+                className="w-full py-1.5 px-3 bg-white hover:bg-slate-50 border border-slate-200 text-slate-600 rounded-lg text-xs font-medium flex items-center justify-center space-x-1.5 transition-colors cursor-pointer"
+              >
+                <History className="w-3.5 h-3.5 text-slate-400" />
+                <span>Audit Log & Riwayat</span>
+              </button>
+            ) : (
+              <button
+                id="quick-asn-table-btn"
+                onClick={() => navigate('tabel_absensi_asn')}
+                className="w-full py-1.5 px-3 bg-white hover:bg-slate-50 border border-slate-200 text-slate-600 rounded-lg text-xs font-medium flex items-center justify-center space-x-1.5 transition-colors cursor-pointer"
+              >
+                <PenTool className="w-3.5 h-3.5 text-slate-400" />
+                <span>Tabel Absensi ASN</span>
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -2979,13 +2991,23 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
-            <button
-              onClick={() => navigate('logs')}
-              className="text-xs font-medium text-slate-600 hover:text-slate-900 flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-white border border-slate-200 transition-colors cursor-pointer"
-            >
-              <ShieldCheck className="w-3.5 h-3.5 text-slate-500" />
-              <span>Log Audit</span>
-            </button>
+            {userRole === 'admin' ? (
+              <button
+                onClick={() => navigate('logs')}
+                className="text-xs font-medium text-slate-600 hover:text-slate-900 flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-white border border-slate-200 transition-colors cursor-pointer"
+              >
+                <ShieldCheck className="w-3.5 h-3.5 text-slate-500" />
+                <span>Log Audit</span>
+              </button>
+            ) : (
+              <button
+                onClick={() => navigate('tabel_absensi_asn')}
+                className="text-xs font-medium text-slate-600 hover:text-slate-900 flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-white border border-slate-200 transition-colors cursor-pointer"
+              >
+                <PenTool className="w-3.5 h-3.5 text-slate-500" />
+                <span>Tabel Absensi</span>
+              </button>
+            )}
             <button
               onClick={() => navigate('rekap')}
               className="text-xs font-medium text-slate-600 hover:text-slate-900 flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-white border border-slate-200 transition-colors cursor-pointer"

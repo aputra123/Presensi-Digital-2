@@ -241,6 +241,22 @@ export const AsnAttendanceTableTab: React.FC<AsnAttendanceTableTabProps> = ({
   const [isShareModalOpen, setIsShareModalOpen] = useState<boolean>(false);
   const [copyFeedback, setCopyFeedback] = useState<boolean>(false);
 
+  // Transient Loading State & Local State Buffer for Signature Saving
+  const [isSavingSignature, setIsSavingSignature] = useState<boolean>(false);
+  const [signatureBufferMap, setSignatureBufferMap] = useState<
+    Record<string, { signature: string; timestamp: string; sessionType: 'masuk' | 'pulang' }>
+  >({});
+  const signatureBufferRef = useRef<
+    Map<string, { signature: string; timestamp: string; sessionType: 'masuk' | 'pulang' }>
+  >(new Map());
+
+  // Signature Image Upload Handler
+  const signatureUploadInputRef = useRef<HTMLInputElement | null>(null);
+  const [signatureUploadTarget, setSignatureUploadTarget] = useState<{
+    teacherId: string;
+    sessionType: 'masuk' | 'pulang';
+  } | null>(null);
+
   const apelVideoRef = useRef<HTMLVideoElement | null>(null);
   const apelCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const apelStreamRef = useRef<MediaStream | null>(null);
@@ -280,7 +296,29 @@ export const AsnAttendanceTableTab: React.FC<AsnAttendanceTableTabProps> = ({
       if (saved) {
         const parsed: AsnAttendanceRow[] = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          setTableRows(parsed);
+          // Merge with any signatures in records if not present in saved row
+          const merged = parsed.map((row) => {
+            const recIn = records.find(
+              (r) =>
+                r.identifier === row.nip &&
+                r.date === selectedDate &&
+                (r.type === 'masuk' || !r.type)
+            );
+            const recOut = records.find(
+              (r) =>
+                r.identifier === row.nip &&
+                r.date === selectedDate &&
+                r.type === 'pulang'
+            );
+            return {
+              ...row,
+              signatureIn: row.signatureIn || recIn?.signatureIn || recIn?.signature,
+              signatureInTime: row.signatureInTime || recIn?.signatureInTime || recIn?.time,
+              signatureOut: row.signatureOut || recOut?.signatureOut || recOut?.signature,
+              signatureOutTime: row.signatureOutTime || recOut?.signatureOutTime || recOut?.time,
+            };
+          });
+          setTableRows(merged);
           return;
         }
       }
@@ -321,10 +359,10 @@ export const AsnAttendanceTableTab: React.FC<AsnAttendanceTableTabProps> = ({
         nip: t.nip,
         employmentStatus: t.employmentStatus,
         subjectOrRole: t.subject || t.role || 'Tenaga Kependidikan',
-        signatureIn: undefined,
-        signatureInTime: recIn ? recIn.time : undefined,
-        signatureOut: undefined,
-        signatureOutTime: recOut ? recOut.time : undefined,
+        signatureIn: recIn?.signatureIn || recIn?.signature || undefined,
+        signatureInTime: recIn ? (recIn.signatureInTime || recIn.time) : undefined,
+        signatureOut: recOut?.signatureOut || recOut?.signature || undefined,
+        signatureOutTime: recOut ? (recOut.signatureOutTime || recOut.time) : undefined,
         status: initialStatus,
         notes: recIn?.note || '',
         updatedAt: new Date().toISOString(),
@@ -899,114 +937,219 @@ export const AsnAttendanceTableTab: React.FC<AsnAttendanceTableTabProps> = ({
     });
   };
 
-  // Handle save signature from modal
-  const handleSaveSignature = (signatureDataUrl: string, timestamp: string) => {
-    const { teacherId, sessionType } = activeModal;
-    const updated = tableRows.map((row) => {
-      if (row.teacherId === teacherId) {
-        if (sessionType === 'masuk') {
-          return {
-            ...row,
-            signatureIn: signatureDataUrl,
-            signatureInTime: timestamp,
-            status: row.status === 'tanpa_keterangan' ? 'hadir' : row.status,
-            updatedAt: new Date().toISOString(),
+  // Commit signature changes with local temporary state buffer & audit synchronization
+  const commitSignatureToRow = async (
+    teacherId: string,
+    sessionType: 'masuk' | 'pulang',
+    signatureDataUrl: string,
+    timestamp: string
+  ): Promise<void> => {
+    setIsSavingSignature(true);
+    const bufferKey = `${teacherId}_${sessionType}`;
+
+    // 1. Immediately store into local temporary buffer ref & state to prevent vanishing during re-renders
+    signatureBufferRef.current.set(bufferKey, {
+      signature: signatureDataUrl,
+      timestamp,
+      sessionType,
+    });
+    setSignatureBufferMap((prev) => ({
+      ...prev,
+      [bufferKey]: {
+        signature: signatureDataUrl,
+        timestamp,
+        sessionType,
+      },
+    }));
+
+    try {
+      const updated = tableRows.map((row) => {
+        if (row.teacherId === teacherId) {
+          if (sessionType === 'masuk') {
+            return {
+              ...row,
+              signatureIn: signatureDataUrl,
+              signatureInTime: timestamp,
+              status: row.status === 'tanpa_keterangan' ? 'hadir' : row.status,
+              updatedAt: new Date().toISOString(),
+            };
+          } else {
+            return {
+              ...row,
+              signatureOut: signatureDataUrl,
+              signatureOutTime: timestamp,
+              updatedAt: new Date().toISOString(),
+            };
+          }
+        }
+        return row;
+      });
+
+      updateTableRows(updated);
+
+      // Sync with app-wide attendance records
+      const targetRow = updated.find((r) => r.teacherId === teacherId);
+      if (targetRow) {
+        if (onRecordAttendance) {
+          const newRecord: AttendanceRecord = {
+            id: `att_asn_${teacherId}_${selectedDate}_${sessionType}`,
+            personId: teacherId,
+            personType: 'teacher',
+            personName: targetRow.name,
+            identifier: targetRow.nip,
+            classOrSubject: targetRow.subjectOrRole,
+            date: selectedDate,
+            time: timestamp,
+            type: sessionType,
+            status:
+              targetRow.status === 'tanpa_keterangan'
+                ? 'hadir'
+                : (targetRow.status as any),
+            method: 'manual',
+            signature: signatureDataUrl,
+            signatureIn: sessionType === 'masuk' ? signatureDataUrl : targetRow.signatureIn,
+            signatureOut: sessionType === 'pulang' ? signatureDataUrl : targetRow.signatureOut,
+            signatureInTime: sessionType === 'masuk' ? timestamp : targetRow.signatureInTime,
+            signatureOutTime: sessionType === 'pulang' ? timestamp : targetRow.signatureOutTime,
+            employmentStatus: targetRow.employmentStatus,
+            syncStatus: !navigator.onLine ? 'pending_sync' : 'synced',
+            isOfflineRecord: !navigator.onLine,
+            syncedAt: navigator.onLine ? new Date().toISOString() : undefined,
+            note: targetRow.notes || `Tanda tangan absensi ${sessionType === 'masuk' ? 'masuk' : 'pulang'}`,
           };
-        } else {
-          return {
-            ...row,
-            signatureOut: signatureDataUrl,
-            signatureOutTime: timestamp,
-            updatedAt: new Date().toISOString(),
+          onRecordAttendance(newRecord);
+        }
+
+        try {
+          syncManager.enqueue('asn_table_sync', {
+            date: selectedDate,
+            teacherId,
+            sessionType,
+            timestamp,
+            row: targetRow,
+          });
+        } catch (e) {
+          console.warn('Sync queue notice:', e);
+        }
+
+        // Record activity log for audit purposes
+        if (onAddActivityLog) {
+          const logEntry: ActivityLog = {
+            id: `act_sig_${Date.now()}_${teacherId}`,
+            timestamp: new Date().toISOString(),
+            date: selectedDate,
+            time: timestamp,
+            category: 'attendance',
+            actor: {
+              name: targetRow.name,
+              role: targetRow.employmentStatus ? `ASN (${targetRow.employmentStatus})` : 'Guru / GTK',
+            },
+            action: `Tanda Tangan Presensi ASN - Sesi ${sessionType === 'masuk' ? 'Masuk' : 'Pulang'}`,
+            description: `Presensi elektronik ASN ditandatangani oleh ${targetRow.name} (NIP: ${targetRow.nip || '-'}, ID: ${teacherId}) pada tanggal ${selectedDate} pukul ${timestamp} WITA.`,
+            targetId: teacherId,
+            targetName: targetRow.name,
+            status: 'success',
+            deviceInfo: typeof navigator !== 'undefined' && navigator.userAgent.includes('Mobile') ? 'Smartphone' : 'Laptop / PC',
           };
+          onAddActivityLog(logEntry);
+        }
+
+        // Visual feedback notification
+        if (onAddNotification) {
+          onAddNotification({
+            id: `notif_sig_${Date.now()}`,
+            title: 'Tanda Tangan ASN Disimpan',
+            message: `Tanda tangan sesi ${sessionType === 'masuk' ? 'masuk' : 'pulang'} untuk ${targetRow.name} berhasil disimpan dan dicatat dalam log audit.`,
+            type: 'attendance',
+            timestamp: `${timestamp} WITA`,
+            read: false,
+          });
         }
       }
-      return row;
-    });
 
-    updateTableRows(updated);
+      // Safe sync guarantee delay to ensure state and localStorage commit cleanly
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    } finally {
+      setIsSavingSignature(false);
+    }
+  };
 
-    // Sync with app-wide attendance records
-    const targetRow = updated.find((r) => r.teacherId === teacherId);
-    if (targetRow) {
-      if (onRecordAttendance) {
-        const newRecord: AttendanceRecord = {
-          id: `att_asn_${teacherId}_${selectedDate}_${sessionType}`,
-          personId: teacherId,
-          personType: 'teacher',
-          personName: targetRow.name,
-          identifier: targetRow.nip,
-          classOrSubject: targetRow.subjectOrRole,
-          date: selectedDate,
-          time: timestamp,
-          type: sessionType,
-          status:
-            targetRow.status === 'tanpa_keterangan'
-              ? 'hadir'
-              : (targetRow.status as any),
-          method: 'manual',
-          signature: signatureDataUrl,
-          signatureIn: sessionType === 'masuk' ? signatureDataUrl : targetRow.signatureIn,
-          signatureOut: sessionType === 'pulang' ? signatureDataUrl : targetRow.signatureOut,
-          signatureInTime: sessionType === 'masuk' ? timestamp : targetRow.signatureInTime,
-          signatureOutTime: sessionType === 'pulang' ? timestamp : targetRow.signatureOutTime,
-          employmentStatus: targetRow.employmentStatus,
-          syncStatus: !navigator.onLine ? 'pending_sync' : 'synced',
-          isOfflineRecord: !navigator.onLine,
-          syncedAt: navigator.onLine ? new Date().toISOString() : undefined,
-          note: targetRow.notes || `Tanda tangan absensi ${sessionType === 'masuk' ? 'masuk' : 'pulang'}`,
-        };
-        onRecordAttendance(newRecord);
-      }
+  // Handle save signature from modal (awaits sync completion before modal closes)
+  const handleSaveSignature = async (signatureDataUrl: string, timestamp: string) => {
+    const { teacherId, sessionType } = activeModal;
+    if (!teacherId) return;
 
-      try {
-        syncManager.enqueue('asn_table_sync', {
-          date: selectedDate,
-          teacherId,
-          sessionType,
-          timestamp,
-          row: targetRow,
-        });
-      } catch (e) {
-        console.warn('Sync queue notice:', e);
-      }
+    // Ensure underlying canvas reference is safely nulled ONLY after sync promise resolves
+    await commitSignatureToRow(teacherId, sessionType, signatureDataUrl, timestamp);
+    setActiveModal((prev) => ({ ...prev, isOpen: false }));
+  };
 
-      // Record activity log for audit purposes
-      if (onAddActivityLog) {
-        const logEntry: ActivityLog = {
-          id: `act_sig_${Date.now()}_${teacherId}`,
-          timestamp: new Date().toISOString(),
-          date: selectedDate,
-          time: timestamp,
-          category: 'attendance',
-          actor: {
-            name: targetRow.name,
-            role: targetRow.employmentStatus ? `ASN (${targetRow.employmentStatus})` : 'Guru / GTK',
-          },
-          action: `Tanda Tangan Presensi ASN - Sesi ${sessionType === 'masuk' ? 'Masuk' : 'Pulang'}`,
-          description: `Presensi elektronik ASN ditandatangani oleh ${targetRow.name} (NIP: ${targetRow.nip || '-'}, ID: ${teacherId}) pada tanggal ${selectedDate} pukul ${timestamp} WITA.`,
-          targetId: teacherId,
-          targetName: targetRow.name,
-          status: 'success',
-          deviceInfo: typeof navigator !== 'undefined' && navigator.userAgent.includes('Mobile') ? 'Smartphone' : 'Laptop / PC',
-        };
-        onAddActivityLog(logEntry);
-      }
+  // Trigger signature image upload file picker
+  const handleTriggerUploadSignature = (teacherId: string, sessionType: 'masuk' | 'pulang') => {
+    setSignatureUploadTarget({ teacherId, sessionType });
+    if (signatureUploadInputRef.current) {
+      signatureUploadInputRef.current.value = '';
+      signatureUploadInputRef.current.click();
+    }
+  };
 
-      // Visual feedback notification
-      if (onAddNotification) {
-        onAddNotification({
-          id: `notif_sig_${Date.now()}`,
-          title: 'Tanda Tangan ASN Disimpan',
-          message: `Tanda tangan sesi ${sessionType === 'masuk' ? 'masuk' : 'pulang'} untuk ${targetRow.name} berhasil disimpan dan dicatat dalam log audit.`,
-          type: 'attendance',
-          timestamp: `${timestamp} WITA`,
-          read: false,
-        });
-      }
+  // Sanitize, scale to canvas dimensions, and save uploaded signature image
+  const handleFileSignatureUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !signatureUploadTarget) return;
+
+    if (!file.type.startsWith('image/')) {
+      alert('Harap pilih berkas gambar tanda tangan yang valid (PNG, JPG, JPEG, WebP)');
+      return;
     }
 
-    setActiveModal((prev) => ({ ...prev, isOpen: false }));
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        // Offscreen canvas matching high-DPI signature pad dimensions
+        const offscreen = document.createElement('canvas');
+        const targetWidth = 640;
+        const targetHeight = 320;
+        offscreen.width = targetWidth;
+        offscreen.height = targetHeight;
+        const ctx = offscreen.getContext('2d');
+        if (!ctx) return;
+
+        // Clean transparent canvas with smooth rendering
+        ctx.clearRect(0, 0, targetWidth, targetHeight);
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+
+        // Proportional scale to fit canvas keeping aspect ratio
+        const scale = Math.min((targetWidth - 32) / img.width, (targetHeight - 32) / img.height, 1);
+        const w = img.width * scale;
+        const h = img.height * scale;
+        const x = (targetWidth - w) / 2;
+        const y = (targetHeight - h) / 2;
+
+        ctx.drawImage(img, x, y, w, h);
+
+        const sanitizedDataUrl = offscreen.toDataURL('image/png');
+        const now = new Date();
+        const timeStr = now.toLocaleTimeString('id-ID', {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: false,
+        });
+
+        commitSignatureToRow(
+          signatureUploadTarget.teacherId,
+          signatureUploadTarget.sessionType,
+          sanitizedDataUrl,
+          timeStr
+        );
+        setSignatureUploadTarget(null);
+      };
+      img.src = event.target?.result as string;
+    };
+    reader.readAsDataURL(file);
   };
 
   // Re-build format from scratch based on current teachers & records
@@ -1784,6 +1927,16 @@ export const AsnAttendanceTableTab: React.FC<AsnAttendanceTableTabProps> = ({
               ) : (
                 filteredRows.map((row, index) => {
                   const isEven = index % 2 === 0;
+
+                  // Buffer fallback ensures signatures never disappear during saving re-renders
+                  const bufferedIn = signatureBufferMap[`${row.teacherId}_masuk`];
+                  const effectiveSigIn = bufferedIn?.signature || row.signatureIn;
+                  const effectiveSigInTime = bufferedIn?.timestamp || row.signatureInTime;
+
+                  const bufferedOut = signatureBufferMap[`${row.teacherId}_pulang`];
+                  const effectiveSigOut = bufferedOut?.signature || row.signatureOut;
+                  const effectiveSigOutTime = bufferedOut?.timestamp || row.signatureOutTime;
+
                   return (
                     <tr
                       key={row.teacherId}
@@ -1826,11 +1979,11 @@ export const AsnAttendanceTableTab: React.FC<AsnAttendanceTableTabProps> = ({
 
                       {/* 3. Sub-kolom Tanda Tangan: ABSEN MASUK */}
                       <td className="py-2.5 px-3 border-r border-slate-100 text-center align-middle">
-                        {row.signatureIn ? (
+                        {effectiveSigIn ? (
                           <div className="flex flex-col items-center space-y-1 group relative">
                             <div className="w-36 h-16 bg-white rounded-xl border border-slate-200 shadow-2xs flex items-center justify-center p-1 relative overflow-hidden">
                               <img
-                                src={row.signatureIn}
+                                src={effectiveSigIn}
                                 alt={`TTD Masuk ${row.name}`}
                                 className="max-h-full max-w-full object-contain"
                               />
@@ -1839,15 +1992,23 @@ export const AsnAttendanceTableTab: React.FC<AsnAttendanceTableTabProps> = ({
                                 <button
                                   type="button"
                                   onClick={() => handleOpenSignatureModal(row, 'masuk')}
-                                  className="p-1.5 rounded-lg bg-white text-indigo-700 hover:bg-indigo-50 transition-colors"
+                                  className="p-1.5 rounded-lg bg-white text-indigo-700 hover:bg-indigo-50 transition-colors cursor-pointer"
                                   title="Ubah Tanda Tangan"
                                 >
                                   <PenTool className="w-3.5 h-3.5" />
                                 </button>
                                 <button
                                   type="button"
+                                  onClick={() => handleTriggerUploadSignature(row.teacherId, 'masuk')}
+                                  className="p-1.5 rounded-lg bg-white text-emerald-700 hover:bg-emerald-50 transition-colors cursor-pointer"
+                                  title="Unggah Foto/Scan Tanda Tangan"
+                                >
+                                  <Upload className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
                                   onClick={(e) => handleDeleteSignature(row.teacherId, 'masuk', e)}
-                                  className="p-1.5 rounded-lg bg-white text-rose-700 hover:bg-rose-50 transition-colors"
+                                  className="p-1.5 rounded-lg bg-white text-rose-700 hover:bg-rose-50 transition-colors cursor-pointer"
                                   title="Hapus Tanda Tangan"
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
@@ -1856,29 +2017,40 @@ export const AsnAttendanceTableTab: React.FC<AsnAttendanceTableTabProps> = ({
                             </div>
                             <span className="text-[10px] font-mono text-emerald-700 font-bold flex items-center space-x-1">
                               <Clock className="w-3 h-3" />
-                              <span>{row.signatureInTime || 'Hadir'}</span>
+                              <span>{effectiveSigInTime || 'Hadir'}</span>
                             </span>
                           </div>
                         ) : (
-                          <button
-                            type="button"
-                            onClick={() => handleOpenSignatureModal(row, 'masuk')}
-                            className="w-full py-2.5 px-2 rounded-xl border border-dashed border-indigo-300 hover:border-indigo-500 bg-indigo-50/40 hover:bg-indigo-100/60 text-indigo-700 transition-all flex flex-col items-center justify-center gap-1 cursor-pointer group active:scale-98"
-                            title="Klik untuk tanda tangan via touchpad laptop atau layar sentuh HP"
-                          >
-                            <PenTool className="w-4 h-4 text-indigo-500 group-hover:scale-110 transition-transform" />
-                            <span className="text-[11px] font-bold">TTD Masuk</span>
-                          </button>
+                          <div className="flex items-center gap-1.5 w-full">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenSignatureModal(row, 'masuk')}
+                              className="flex-1 py-2 px-1.5 rounded-xl border border-dashed border-indigo-300 hover:border-indigo-500 bg-indigo-50/40 hover:bg-indigo-100/60 text-indigo-700 transition-all flex flex-col items-center justify-center gap-0.5 cursor-pointer group active:scale-98"
+                              title="Klik untuk tanda tangan via touchpad laptop atau layar sentuh HP"
+                            >
+                              <PenTool className="w-3.5 h-3.5 text-indigo-500 group-hover:scale-110 transition-transform" />
+                              <span className="text-[10.5px] font-bold">TTD Masuk</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleTriggerUploadSignature(row.teacherId, 'masuk')}
+                              className="p-2.5 rounded-xl border border-dashed border-slate-300 hover:border-indigo-400 bg-slate-50 hover:bg-indigo-50 text-slate-600 hover:text-indigo-700 transition-all cursor-pointer flex flex-col items-center justify-center gap-0.5"
+                              title="Unggah Berkas Gambar Tanda Tangan"
+                            >
+                              <Upload className="w-3.5 h-3.5" />
+                              <span className="text-[9px] font-medium">Unggah</span>
+                            </button>
+                          </div>
                         )}
                       </td>
 
                       {/* 4. Sub-kolom Tanda Tangan: ABSEN PULANG */}
                       <td className="py-2.5 px-3 border-r border-slate-100 text-center align-middle">
-                        {row.signatureOut ? (
+                        {effectiveSigOut ? (
                           <div className="flex flex-col items-center space-y-1 group relative">
                             <div className="w-36 h-16 bg-white rounded-xl border border-slate-200 shadow-2xs flex items-center justify-center p-1 relative overflow-hidden">
                               <img
-                                src={row.signatureOut}
+                                src={effectiveSigOut}
                                 alt={`TTD Pulang ${row.name}`}
                                 className="max-h-full max-w-full object-contain"
                               />
@@ -1887,15 +2059,23 @@ export const AsnAttendanceTableTab: React.FC<AsnAttendanceTableTabProps> = ({
                                 <button
                                   type="button"
                                   onClick={() => handleOpenSignatureModal(row, 'pulang')}
-                                  className="p-1.5 rounded-lg bg-white text-indigo-700 hover:bg-indigo-50 transition-colors"
+                                  className="p-1.5 rounded-lg bg-white text-indigo-700 hover:bg-indigo-50 transition-colors cursor-pointer"
                                   title="Ubah Tanda Tangan"
                                 >
                                   <PenTool className="w-3.5 h-3.5" />
                                 </button>
                                 <button
                                   type="button"
+                                  onClick={() => handleTriggerUploadSignature(row.teacherId, 'pulang')}
+                                  className="p-1.5 rounded-lg bg-white text-emerald-700 hover:bg-emerald-50 transition-colors cursor-pointer"
+                                  title="Unggah Foto/Scan Tanda Tangan"
+                                >
+                                  <Upload className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
                                   onClick={(e) => handleDeleteSignature(row.teacherId, 'pulang', e)}
-                                  className="p-1.5 rounded-lg bg-white text-rose-700 hover:bg-rose-50 transition-colors"
+                                  className="p-1.5 rounded-lg bg-white text-rose-700 hover:bg-rose-50 transition-colors cursor-pointer"
                                   title="Hapus Tanda Tangan"
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
@@ -1904,19 +2084,30 @@ export const AsnAttendanceTableTab: React.FC<AsnAttendanceTableTabProps> = ({
                             </div>
                             <span className="text-[10px] font-mono text-amber-700 font-bold flex items-center space-x-1">
                               <Clock className="w-3 h-3" />
-                              <span>{row.signatureOutTime || 'Pulang'}</span>
+                              <span>{effectiveSigOutTime || 'Pulang'}</span>
                             </span>
                           </div>
                         ) : (
-                          <button
-                            type="button"
-                            onClick={() => handleOpenSignatureModal(row, 'pulang')}
-                            className="w-full py-2.5 px-2 rounded-xl border border-dashed border-amber-300 hover:border-amber-500 bg-amber-50/40 hover:bg-amber-100/60 text-amber-800 transition-all flex flex-col items-center justify-center gap-1 cursor-pointer group active:scale-98"
-                            title="Klik untuk tanda tangan via touchpad laptop atau layar sentuh HP"
-                          >
-                            <PenTool className="w-4 h-4 text-amber-600 group-hover:scale-110 transition-transform" />
-                            <span className="text-[11px] font-bold">TTD Pulang</span>
-                          </button>
+                          <div className="flex items-center gap-1.5 w-full">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenSignatureModal(row, 'pulang')}
+                              className="flex-1 py-2 px-1.5 rounded-xl border border-dashed border-amber-300 hover:border-amber-500 bg-amber-50/40 hover:bg-amber-100/60 text-amber-800 transition-all flex flex-col items-center justify-center gap-0.5 cursor-pointer group active:scale-98"
+                              title="Klik untuk tanda tangan via touchpad laptop atau layar sentuh HP"
+                            >
+                              <PenTool className="w-3.5 h-3.5 text-amber-600 group-hover:scale-110 transition-transform" />
+                              <span className="text-[10.5px] font-bold">TTD Pulang</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleTriggerUploadSignature(row.teacherId, 'pulang')}
+                              className="p-2.5 rounded-xl border border-dashed border-slate-300 hover:border-amber-400 bg-slate-50 hover:bg-amber-50 text-slate-600 hover:text-amber-800 transition-all cursor-pointer flex flex-col items-center justify-center gap-0.5"
+                              title="Unggah Berkas Gambar Tanda Tangan"
+                            >
+                              <Upload className="w-3.5 h-3.5" />
+                              <span className="text-[9px] font-medium">Unggah</span>
+                            </button>
+                          </div>
                         )}
                       </td>
 
@@ -2250,6 +2441,15 @@ export const AsnAttendanceTableTab: React.FC<AsnAttendanceTableTabProps> = ({
         </div>
       </div>
 
+      {/* Hidden file input for uploading external signature scan/photo */}
+      <input
+        type="file"
+        ref={signatureUploadInputRef}
+        onChange={handleFileSignatureUpload}
+        accept="image/png,image/jpeg,image/jpg,image/webp"
+        className="hidden"
+      />
+
       {/* Signature Pad Modal (for touchpads, mouse, stylus & all smartphones) */}
       <SignaturePadModal
         isOpen={activeModal.isOpen}
@@ -2260,6 +2460,7 @@ export const AsnAttendanceTableTab: React.FC<AsnAttendanceTableTabProps> = ({
         nip={activeModal.nip}
         sessionType={activeModal.sessionType}
         dateStr={selectedDate}
+        isSaving={isSavingSignature}
       />
 
       {/* Official Print & PDF Export Modal with serialized Canvas Signatures & Apel Documentation */}
