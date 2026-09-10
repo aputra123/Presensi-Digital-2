@@ -278,6 +278,29 @@ export default function App() {
     }).catch((err) => console.warn('Remote session verification notice:', err));
   }, []);
 
+  // Enforce role-based tab restriction: Kepsek, BKD, and Guru only see Presensi & Manajemen/Layanan
+  useEffect(() => {
+    const isRestrictedRole =
+      userRole === 'kepala_sekolah' ||
+      userRole === 'bkd_staff' ||
+      userRole === 'bkd' ||
+      userRole === 'teacher' ||
+      userRole === 'piket';
+
+    if (isRestrictedRole) {
+      const restrictedTabs: ActiveTab[] = [
+        'bkd_automation',
+        'logs',
+        'config',
+        'workspace',
+        'biometric_logs',
+      ];
+      if (restrictedTabs.includes(activeTab)) {
+        setActiveTab('dashboard');
+      }
+    }
+  }, [userRole, activeTab]);
+
   // Sync collapsed & locked state to localStorage
   useEffect(() => {
     try {
@@ -817,26 +840,36 @@ export default function App() {
   }, []);
 
   const pendingOfflineCount = useMemo(() => {
-    return records.filter((r) => r.syncStatus === 'pending_sync').length;
+    const recCount = records.filter((r) => r.syncStatus === 'pending_sync').length;
+    const queueCount = syncManager.getStatus().pendingCount;
+    return recCount + queueCount;
   }, [records]);
 
-  // Synchronize all pending offline records to cloud/server
+  // Synchronize all pending offline records, ASN table, and documentation to cloud/server
   const handleSyncPendingRecords = useCallback(async (): Promise<boolean> => {
-    const pending = records.filter((r) => r.syncStatus === 'pending_sync');
-    if (pending.length === 0) return true;
+    const pendingRecords = records.filter((r) => r.syncStatus === 'pending_sync');
+    const syncStatus = syncManager.getStatus();
+    const queuePendingCount = syncStatus.pendingCount;
+
+    if (pendingRecords.length === 0 && queuePendingCount === 0) return true;
 
     try {
-      await new Promise((resolve) => setTimeout(resolve, 800));
-      const nowIso = new Date().toISOString();
-      setRecords((prev) =>
-        prev.map((r) =>
-          r.syncStatus === 'pending_sync'
-            ? { ...r, syncStatus: 'synced', isOfflineRecord: false, syncedAt: nowIso }
-            : r
-        )
-      );
+      // 1. Process syncManager queue (ASN attendance table, signatures, and Apel documentation)
+      await syncManager.processQueue(true);
 
-      // Trigger cloud Firestore backup snapshot
+      // 2. Mark pending attendance records as synced
+      const nowIso = new Date().toISOString();
+      if (pendingRecords.length > 0) {
+        setRecords((prev) =>
+          prev.map((r) =>
+            r.syncStatus === 'pending_sync'
+              ? { ...r, syncStatus: 'synced', isOfflineRecord: false, syncedAt: nowIso }
+              : r
+          )
+        );
+      }
+
+      // 3. Trigger cloud Firestore backup snapshot with full current data
       try {
         const payload = generateBackupPayload();
         await saveBackupToFirestore(payload);
@@ -845,10 +878,11 @@ export default function App() {
         console.warn('Sync cloud write notice:', err);
       }
 
+      const totalSynced = pendingRecords.length + queuePendingCount;
       const syncNotif: ToastNotification = {
         id: `notif_sync_${Date.now()}`,
-        title: 'Presensi Offline Berhasil Disinkronkan',
-        message: `${pending.length} data presensi offline wilayah blankspot telah sukses dikirim ke server pusat!`,
+        title: 'Sinkronisasi Otomatis Berhasil',
+        message: `Koneksi pulih: ${totalSynced} data tabel absensi ASN, tanda tangan, dan dokumentasi apel offline telah otomatis terkirim dan tersinkronisasi ke server pusat!`,
         type: 'system',
         timestamp: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WITA',
         read: false,
@@ -856,7 +890,7 @@ export default function App() {
       setNotifications((prev) => [syncNotif, ...prev.slice(0, 12)]);
       return true;
     } catch (err) {
-      console.error('Failed to sync offline records:', err);
+      console.error('Failed to sync offline records and documentation:', err);
       return false;
     }
   }, [records, generateBackupPayload]);
@@ -1394,6 +1428,10 @@ export default function App() {
     });
   }, []);
 
+  const handleAddActivityLog = useCallback((newLog: ActivityLog) => {
+    setActivityLogs((prev) => [newLog, ...prev]);
+  }, []);
+
   const handleDismissNotification = (id: string) => {
     setNotifications((prev) => prev.filter((n) => n.id !== id));
   };
@@ -1670,6 +1708,8 @@ export default function App() {
               todayDate={todayDate}
               onAddTeacher={handleAddTeacher}
               onRecordAttendance={handleRecordAttendance}
+              onAddActivityLog={handleAddActivityLog}
+              onAddNotification={handleAddNotification}
             />
           )}
 

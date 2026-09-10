@@ -1237,6 +1237,7 @@ export const RekapitulasiView: React.FC<RekapitulasiViewProps> = ({
           allRecords={safeRecords}
           students={students}
           teachers={teachers}
+          classes={safeClasses}
           todayDate={todayStr}
           dateRangeLabel={currentDateRangeLabel}
           customTitle="BERITA ACARA REKAPITULASI PRESENSI"

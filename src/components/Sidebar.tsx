@@ -76,6 +76,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const isAutomationAdmin = userRole === 'admin' || userRole === 'bkd_staff' || userRole === 'bkd';
 
+  const isRestrictedRole =
+    userRole === 'kepala_sekolah' ||
+    userRole === 'bkd_staff' ||
+    userRole === 'bkd' ||
+    userRole === 'teacher' ||
+    userRole === 'piket';
+
   const menuGroups = [
     {
       groupTitle: 'PRESENSI',
@@ -137,11 +144,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
     {
       groupTitle: 'BKD & SISTEM',
       items: [
-        {
-          id: 'apel_documentation' as ActiveTab,
-          label: 'Dokumentasi Apel BKD',
-          icon: Building2,
-        },
         {
           id: 'bkd_automation' as ActiveTab,
           label: 'Sinkronisasi BKD',
@@ -360,9 +362,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
         </div>
 
-        {/* Navigation List */}
+        {/* Navigation List - Role kepsek, BKD dan Guru hanya menampilkan bagian presensi dan manajemen & layanan */}
         <nav className="flex-1 overflow-y-auto px-3 py-2 space-y-3">
-          {menuGroups.map((group, gIdx) => (
+          {(isRestrictedRole
+            ? menuGroups.filter(
+                (g) => g.groupTitle === 'PRESENSI' || g.groupTitle === 'MANAJEMEN & LAYANAN'
+              )
+            : menuGroups
+          ).map((group, gIdx) => (
             <div key={gIdx} className="space-y-0.5">
               <div className="px-2.5 py-1 text-[10px] font-medium text-slate-400 uppercase tracking-wider">
                 {group.groupTitle}

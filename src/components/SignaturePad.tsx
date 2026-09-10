@@ -3,45 +3,30 @@ import {
   RotateCcw,
   Eraser,
   Check,
+  Undo2,
+  PenTool,
+  Sliders,
+  Sparkles,
   Smartphone,
   Laptop,
-  PenTool,
-  Sparkles,
-  Info,
-  Undo2,
-  Sliders,
+  AlertCircle,
 } from 'lucide-react';
 
 export interface SignaturePadProps {
-  /** Initial base64 data URL to load onto the canvas */
   initialSignature?: string;
-  /** Callback triggered when user clicks Save or applies the signature */
   onSave?: (signatureDataUrl: string, timestamp: string) => void;
-  /** Reactive callback triggered whenever the signature changes */
   onChange?: (signatureDataUrl: string) => void;
-  /** Callback triggered when canvas is cleared */
   onClear?: () => void;
-  /** Optional cancel/close callback */
   onCancel?: () => void;
-  /** Custom canvas width (defaults to responsive container width) */
   width?: number;
-  /** Custom canvas height (defaults to 200px) */
   height?: number;
-  /** Default stroke color */
   defaultColor?: string;
-  /** Default stroke width */
   defaultLineWidth?: number;
-  /** Whether to show header instructions */
   showInstructions?: boolean;
-  /** Whether to show toolbar (pen color, width, clear, undo) */
   showToolbar?: boolean;
-  /** Whether to show action footer (Batal & Simpan) */
   showFooter?: boolean;
-  /** Title or subject label, e.g. "Tanda Tangan Absen Masuk" */
   title?: string;
-  /** Subtitle with person's name / NIP */
   subtitle?: string;
-  /** Container custom classes */
   className?: string;
 }
 
@@ -73,94 +58,154 @@ export const SignaturePad: React.FC<SignaturePadProps> = ({
 
   const [strokeColor, setStrokeColor] = useState<string>(defaultColor);
   const [lineWidth, setLineWidth] = useState<number>(() => {
-    // Detect mobile vs desktop for optimal initial stroke thickness
     if (typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches) {
-      return 3.2; // Optimized for fingers on mobile touchscreens
+      return 3.4; // Optimal untuk sentuhan jari di smartphone
     }
-    return defaultLineWidth || 2.8; // Optimized for mouse / touchpad
+    return defaultLineWidth || 2.8;
   });
-  const [isDrawing, setIsDrawing] = useState<boolean>(false);
+  const [_isDrawing, setIsDrawing] = useState<boolean>(false);
   const [hasDrawn, setHasDrawn] = useState<boolean>(Boolean(initialSignature));
-  const [history, setHistory] = useState<ImageData[]>([]);
+  const [history, setHistory] = useState<string[]>([]); // store data URLs for robust high-DPI undo
   const [showStrokeSlider, setShowStrokeSlider] = useState<boolean>(false);
   const [clearFlash, setClearFlash] = useState<boolean>(false);
+  const [validationToast, setValidationToast] = useState<string | null>(null);
+  const [isShaking, setIsShaking] = useState<boolean>(false);
 
-  const pointsRef = useRef<Point[]>([]);
+  // Smooth spline references to prevent jagged or broken lines
+  const lastPointRef = useRef<Point | null>(null);
+  const lastMidPointRef = useRef<Point | null>(null);
   const isPointerDownRef = useRef<boolean>(false);
 
   // Resize and initialize canvas with High DPI backing store
-  const initCanvas = useCallback(() => {
-    const canvas = canvasRef.current;
-    const container = containerRef.current;
-    if (!canvas || !container) return;
+  const initCanvas = useCallback(
+    (preserveContent = true) => {
+      const canvas = canvasRef.current;
+      const container = containerRef.current;
+      if (!canvas || !container) return;
 
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    if (!ctx) return;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      if (!ctx) return;
 
-    const rect = container.getBoundingClientRect();
-    const dpr = Math.max(window.devicePixelRatio || 1, 2); // Minimum 2x for sharp signatures
+      const rect = container.getBoundingClientRect();
+      const dpr = Math.max(window.devicePixelRatio || 1, 2);
 
-    const displayWidth = customWidth || Math.max(rect.width || 320, 300);
-    const displayHeight = customHeight;
+      const displayWidth = customWidth || Math.max(rect.width || 320, 280);
+      const displayHeight = customHeight;
 
-    canvas.width = displayWidth * dpr;
-    canvas.height = displayHeight * dpr;
-    canvas.style.width = `${displayWidth}px`;
-    canvas.style.height = `${displayHeight}px`;
+      // Capture existing drawing before resizing to prevent accidental clearing
+      let prevDataUrl: string | null = null;
+      if (preserveContent && canvas.width > 0 && canvas.height > 0 && hasDrawn) {
+        try {
+          prevDataUrl = canvas.toDataURL('image/png');
+        } catch {
+          prevDataUrl = null;
+        }
+      }
 
-    ctx.scale(dpr, dpr);
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.strokeStyle = strokeColor;
-    ctx.lineWidth = lineWidth;
+      canvas.width = displayWidth * dpr;
+      canvas.height = displayHeight * dpr;
+      canvas.style.width = `${displayWidth}px`;
+      canvas.style.height = `${displayHeight}px`;
 
-    // Load initial signature if provided
-    if (initialSignature) {
-      const img = new Image();
-      img.crossOrigin = 'anonymous';
-      img.onload = () => {
+      ctx.scale(dpr, dpr);
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.strokeStyle = strokeColor;
+      ctx.lineWidth = lineWidth;
+
+      if (prevDataUrl) {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => {
+          ctx.clearRect(0, 0, displayWidth, displayHeight);
+          ctx.drawImage(img, 0, 0, displayWidth, displayHeight);
+          setHasDrawn(true);
+        };
+        img.src = prevDataUrl;
+      } else if (initialSignature) {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => {
+          ctx.clearRect(0, 0, displayWidth, displayHeight);
+          ctx.drawImage(img, 0, 0, displayWidth, displayHeight);
+          setHasDrawn(true);
+          setHistory([initialSignature]);
+        };
+        img.src = initialSignature;
+      } else {
         ctx.clearRect(0, 0, displayWidth, displayHeight);
-        ctx.drawImage(img, 0, 0, displayWidth, displayHeight);
-        setHasDrawn(true);
-        // Save initial snapshot
-        const snapshot = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        setHistory([snapshot]);
-      };
-      img.src = initialSignature;
-    } else {
-      ctx.clearRect(0, 0, displayWidth, displayHeight);
-      setHasDrawn(false);
-      setHistory([]);
-    }
-  }, [customWidth, customHeight, strokeColor, lineWidth, initialSignature]);
+        setHasDrawn(false);
+        setHistory([]);
+      }
+    },
+    [customWidth, customHeight, initialSignature, hasDrawn, strokeColor, lineWidth]
+  );
 
-  // Set up resize observer to keep canvas responsive
+  // Update stroke color
   useEffect(() => {
-    initCanvas();
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.strokeStyle = strokeColor;
+    }
+  }, [strokeColor]);
+
+  // Update stroke width
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.lineWidth = lineWidth;
+    }
+  }, [lineWidth]);
+
+  // Set up resize observer & orientation change handler
+  useEffect(() => {
+    initCanvas(false);
 
     const container = containerRef.current;
     if (!container) return;
 
-    const resizeObserver = new ResizeObserver(() => {
-      // Re-init only if dimensions changed significantly and no drawing in progress
-      if (!isDrawing && !isPointerDownRef.current) {
-        initCanvas();
+    let prevWidth = container.clientWidth;
+    const resizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const newWidth = entry.contentRect.width;
+        if (Math.abs(newWidth - prevWidth) > 12 && !isPointerDownRef.current) {
+          prevWidth = newWidth;
+          initCanvas(true);
+        }
       }
     });
 
     resizeObserver.observe(container);
-    return () => resizeObserver.disconnect();
-  }, [initCanvas, isDrawing]);
 
-  // Get coordinates relative to canvas
-  const getCoordinates = (e: React.PointerEvent<HTMLCanvasElement>): Point => {
+    const handleOrientationChange = () => {
+      setTimeout(() => {
+        initCanvas(true);
+      }, 150);
+    };
+
+    window.addEventListener('orientationchange', handleOrientationChange);
+    window.addEventListener('resize', handleOrientationChange);
+
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener('orientationchange', handleOrientationChange);
+      window.removeEventListener('resize', handleOrientationChange);
+    };
+  }, [initCanvas]);
+
+  // Get coordinates relative to canvas display size
+  const getCoordinates = (clientX: number, clientY: number): Point => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0, time: Date.now() };
 
     const rect = canvas.getBoundingClientRect();
     return {
-      x: e.clientX - rect.left,
-      y: e.clientY - rect.top,
+      x: clientX - rect.left,
+      y: clientY - rect.top,
       time: Date.now(),
     };
   };
@@ -169,114 +214,171 @@ export const SignaturePad: React.FC<SignaturePadProps> = ({
   const saveSnapshot = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    const snapshot = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    setHistory((prev) => [...prev.slice(-10), snapshot]); // keep up to 10 undo steps
+    try {
+      const dataUrl = canvas.toDataURL('image/png');
+      setHistory((prev) => [...prev.slice(-12), dataUrl]);
+    } catch {}
+  };
+
+  // Check if canvas has actual drawn content (pixel alpha test)
+  const isCanvasEmpty = (): boolean => {
+    const canvas = canvasRef.current;
+    if (!canvas || !hasDrawn) return true;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return true;
+
+    try {
+      const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const data = imgData.data;
+      // Scan for non-transparent pixels
+      for (let i = 3; i < data.length; i += 16) {
+        if (data[i] > 10) return false;
+      }
+      return true;
+    } catch {
+      return !hasDrawn;
+    }
   };
 
   // Pointer Down (Mouse click, Touch start, Stylus contact)
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    // Only respond to primary button / touch
     if (e.button !== 0 && e.pointerType === 'mouse') return;
 
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    // Prevent default gesture scrolling on phones
-    canvas.setPointerCapture?.(e.pointerId);
+    try {
+      canvas.setPointerCapture?.(e.pointerId);
+    } catch {}
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
+    // Reset validation error if user starts drawing
+    if (validationToast) {
+      setValidationToast(null);
+    }
+
     saveSnapshot();
 
-    const pt = getCoordinates(e);
-    pointsRef.current = [pt];
+    const pt = getCoordinates(e.clientX, e.clientY);
+    lastPointRef.current = pt;
+    lastMidPointRef.current = pt;
     isPointerDownRef.current = true;
     setIsDrawing(true);
     setHasDrawn(true);
 
-    ctx.beginPath();
+    // Initial dot point with round cap
     ctx.strokeStyle = strokeColor;
     ctx.lineWidth = lineWidth;
-    ctx.moveTo(pt.x, pt.y);
-    // Draw initial dot in case of quick tap
-    ctx.arc(pt.x, pt.y, lineWidth / 3, 0, Math.PI * 2);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
     ctx.fillStyle = strokeColor;
-    ctx.fill();
     ctx.beginPath();
+    ctx.arc(pt.x, pt.y, Math.max(lineWidth / 2, 1.2), 0, Math.PI * 2);
+    ctx.fill();
   };
 
-  // Pointer Move (Mouse move, Touch drag, Touchpad swipe)
+  // Pointer Move with continuous quadratic Bézier interpolation (zero gaps, silky smooth)
   const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!isPointerDownRef.current) return;
+    if (!isPointerDownRef.current || !lastPointRef.current || !lastMidPointRef.current) return;
 
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const pt = getCoordinates(e);
-    pointsRef.current.push(pt);
-
-    const pts = pointsRef.current;
-    if (pts.length < 2) return;
-
-    // Smooth Bézier curve through midpoints
     ctx.strokeStyle = strokeColor;
     ctx.lineWidth = lineWidth;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
 
-    const p1 = pts[pts.length - 2];
-    const p2 = pts[pts.length - 1];
-    const midPoint = {
-      x: (p1.x + p2.x) / 2,
-      y: (p1.y + p2.y) / 2,
-    };
+    // Support coalesced events for high-rate digitizers and styluses
+    const coalescedEvents =
+      typeof (e.nativeEvent as any)?.getCoalescedEvents === 'function'
+        ? (e.nativeEvent as any).getCoalescedEvents()
+        : [e.nativeEvent || e];
 
-    ctx.beginPath();
-    ctx.moveTo(p1.x, p1.y);
-    ctx.quadraticCurveTo(p1.x, p1.y, midPoint.x, midPoint.y);
-    ctx.lineTo(p2.x, p2.y);
-    ctx.stroke();
+    for (let i = 0; i < coalescedEvents.length; i++) {
+      const ev = coalescedEvents[i];
+      const pt = getCoordinates(ev.clientX, ev.clientY);
+
+      // Avoid redundant tiny noise
+      const dist = Math.hypot(pt.x - lastPointRef.current.x, pt.y - lastPointRef.current.y);
+      if (dist < 0.8) continue;
+
+      const midPoint: Point = {
+        x: (lastPointRef.current.x + pt.x) / 2,
+        y: (lastPointRef.current.y + pt.y) / 2,
+        time: pt.time,
+      };
+
+      // Draw contiguous curve from lastMidPoint to current midPoint using lastPoint as control
+      ctx.beginPath();
+      ctx.moveTo(lastMidPointRef.current.x, lastMidPointRef.current.y);
+      ctx.quadraticCurveTo(lastPointRef.current.x, lastPointRef.current.y, midPoint.x, midPoint.y);
+      ctx.stroke();
+
+      lastPointRef.current = pt;
+      lastMidPointRef.current = midPoint;
+    }
   };
 
   // Finish drawing
   const finishDrawing = (e?: React.PointerEvent<HTMLCanvasElement>) => {
     if (!isPointerDownRef.current) return;
-    isPointerDownRef.current = false;
-    setIsDrawing(false);
-    pointsRef.current = [];
 
-    if (e && canvasRef.current) {
-      try {
-        canvasRef.current.releasePointerCapture?.(e.pointerId);
-      } catch {
-        // ignore
-      }
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext('2d');
+
+    if (ctx && lastPointRef.current && lastMidPointRef.current) {
+      // Connect final point cleanly
+      ctx.beginPath();
+      ctx.moveTo(lastMidPointRef.current.x, lastMidPointRef.current.y);
+      ctx.lineTo(lastPointRef.current.x, lastPointRef.current.y);
+      ctx.stroke();
     }
 
-    // Trigger reactive onChange
-    if (onChange && canvasRef.current) {
-      const dataUrl = canvasRef.current.toDataURL('image/png');
+    isPointerDownRef.current = false;
+    setIsDrawing(false);
+    lastPointRef.current = null;
+    lastMidPointRef.current = null;
+
+    if (e && canvas) {
+      try {
+        canvas.releasePointerCapture?.(e.pointerId);
+      } catch {}
+    }
+
+    setHasDrawn(true);
+
+    if (onChange && canvas) {
+      const dataUrl = canvas.toDataURL('image/png');
       onChange(dataUrl);
     }
   };
 
-  // Clear Canvas with instant responsiveness
+  // Clear Canvas
   const handleClear = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    pointsRef.current = [];
+    const rect = containerRef.current?.getBoundingClientRect();
+    const displayWidth = customWidth || Math.max(rect?.width || 320, 280);
+    const displayHeight = customHeight;
+
+    ctx.clearRect(0, 0, displayWidth, displayHeight);
     isPointerDownRef.current = false;
+    lastPointRef.current = null;
+    lastMidPointRef.current = null;
+    setIsDrawing(false);
     setHasDrawn(false);
     setHistory([]);
     setClearFlash(true);
-    setTimeout(() => setClearFlash(false), 500);
+    setValidationToast(null);
+    setTimeout(() => setClearFlash(false), 400);
 
     onClear?.();
     if (onChange) {
@@ -291,23 +393,29 @@ export const SignaturePad: React.FC<SignaturePadProps> = ({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
+    const rect = containerRef.current?.getBoundingClientRect();
+    const displayWidth = customWidth || Math.max(rect?.width || 320, 280);
+    const displayHeight = customHeight;
+
     const newHistory = [...history];
-    const prevSnapshot = newHistory.pop();
+    newHistory.pop();
     setHistory(newHistory);
 
     if (newHistory.length > 0) {
-      const last = newHistory[newHistory.length - 1];
-      ctx.putImageData(last, 0, 0);
-      setHasDrawn(true);
-      if (onChange) {
-        onChange(canvas.toDataURL('image/png'));
-      }
+      const lastUrl = newHistory[newHistory.length - 1];
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        ctx.clearRect(0, 0, displayWidth, displayHeight);
+        ctx.drawImage(img, 0, 0, displayWidth, displayHeight);
+        setHasDrawn(true);
+        onChange?.(lastUrl);
+      };
+      img.src = lastUrl;
     } else {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.clearRect(0, 0, displayWidth, displayHeight);
       setHasDrawn(false);
-      if (onChange) {
-        onChange('');
-      }
+      onChange?.('');
     }
   };
 
@@ -318,9 +426,25 @@ export const SignaturePad: React.FC<SignaturePadProps> = ({
     return canvas.toDataURL('image/png');
   };
 
-  // Handle Save
+  // Handle Save with Validation & Visual Feedback
   const handleSave = () => {
+    // Validate that canvas is not empty or blank
+    if (isCanvasEmpty()) {
+      setValidationToast('Tanda tangan masih kosong! Silakan goreskan tanda tangan Anda pada kanvas terlebih dahulu sebelum menyimpan.');
+      setIsShaking(true);
+      setTimeout(() => setIsShaking(false), 650);
+      try {
+        navigator.vibrate?.([80, 40, 80]);
+      } catch {}
+      return;
+    }
+
     const dataUrl = exportDataUrl();
+    if (!dataUrl) {
+      setValidationToast('Gagal memproses tanda tangan. Silakan goreskan tanda tangan ulang.');
+      return;
+    }
+
     const now = new Date();
     const timeStr = now.toLocaleTimeString('id-ID', {
       hour: '2-digit',
@@ -328,13 +452,24 @@ export const SignaturePad: React.FC<SignaturePadProps> = ({
       second: '2-digit',
       hour12: false,
     });
+
+    setValidationToast(null);
+
+    // Call onSave handler
     onSave?.(dataUrl, timeStr);
+
+    // Clear canvas after successful save as required
+    handleClear();
   };
 
   return (
     <div
       ref={containerRef}
-      className={`flex flex-col bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-sm ${className}`}
+      className={`flex flex-col bg-white rounded-3xl border overflow-hidden shadow-sm transition-all duration-200 ${
+        validationToast
+          ? 'border-rose-400 ring-2 ring-rose-200 shadow-rose-100'
+          : 'border-slate-200'
+      } ${isShaking ? 'translate-x-1 duration-75' : ''} ${className}`}
     >
       {/* Header Info */}
       {(title || subtitle || showInstructions) && (
@@ -357,6 +492,23 @@ export const SignaturePad: React.FC<SignaturePadProps> = ({
               </span>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Validation Toast Feedback Alert */}
+      {validationToast && (
+        <div className="px-4 py-2.5 bg-rose-50 border-b border-rose-200 flex items-center justify-between text-xs text-rose-800 font-bold animate-in fade-in slide-in-from-top-2 duration-150">
+          <div className="flex items-center space-x-2">
+            <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+            <span>{validationToast}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setValidationToast(null)}
+            className="text-rose-500 hover:text-rose-800 text-[11px] underline ml-2 cursor-pointer"
+          >
+            Tutup
+          </button>
         </div>
       )}
 
@@ -493,8 +645,8 @@ export const SignaturePad: React.FC<SignaturePadProps> = ({
         {/* Visual Guideline and Watermark */}
         <div className="absolute inset-0 pointer-events-none flex flex-col justify-between p-4 z-0">
           <div className="flex items-center justify-between text-[10px] text-slate-400">
-            <span>Area Tanda Tangan Resmi</span>
-            <span className="font-mono">Sensor Responsif 120Hz</span>
+            <span>Area Tanda Tangan Resmi ASN</span>
+            <span className="font-mono">Sensor Presisi Bebas Patah-Patah</span>
           </div>
 
           {!hasDrawn && (
@@ -504,7 +656,7 @@ export const SignaturePad: React.FC<SignaturePadProps> = ({
                 Goreskan tanda tangan di sini
               </p>
               <p className="text-[10px] text-slate-400">
-                Gunakan jari di HP / stylus / touchpad atau mouse laptop
+                Layar sentuh HP / stylus / touchpad / mouse laptop
               </p>
             </div>
           )}
@@ -556,8 +708,7 @@ export const SignaturePad: React.FC<SignaturePadProps> = ({
             <button
               type="button"
               onClick={handleSave}
-              disabled={!hasDrawn}
-              className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl text-xs font-bold flex items-center space-x-1.5 transition-all shadow-md shadow-indigo-600/20 active:scale-98 cursor-pointer"
+              className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center space-x-1.5 transition-all shadow-md shadow-indigo-600/20 active:scale-98 cursor-pointer"
             >
               <Check className="w-4 h-4" />
               <span>Simpan Tanda Tangan</span>

@@ -89,20 +89,32 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   const session = getAttendanceSessionStatus();
 
-  const navItems = [
-    { id: 'dashboard' as ActiveTab, label: 'Dashboard', icon: LayoutDashboard },
-    { id: 'scan' as ActiveTab, label: 'Scan QR GTK', icon: QrCode, badge: 'Live' },
-    { id: 'selfie' as ActiveTab, label: 'Selfie & BKD', icon: Camera },
-    { id: 'rekap' as ActiveTab, label: 'Rekapitulasi GTK', icon: FileSpreadsheet },
+  const isRestrictedRole =
+    userRole === 'kepala_sekolah' ||
+    userRole === 'bkd_staff' ||
+    userRole === 'bkd' ||
+    userRole === 'teacher' ||
+    userRole === 'piket';
+
+  const allNavItems = [
+    { id: 'dashboard' as ActiveTab, label: 'Dashboard', icon: LayoutDashboard, category: 'presensi' },
+    { id: 'scan' as ActiveTab, label: 'Scan QR GTK', icon: QrCode, badge: 'Live', category: 'presensi' },
+    { id: 'selfie' as ActiveTab, label: 'Selfie & BKD', icon: Camera, category: 'presensi' },
+    { id: 'rekap' as ActiveTab, label: 'Rekapitulasi GTK', icon: FileSpreadsheet, category: 'presensi' },
     {
       id: 'layanan_gtk' as ActiveTab,
       label: 'Layanan & Izin GTK',
       icon: Award,
       badge: pendingGtkCount > 0 ? String(pendingGtkCount) : undefined,
+      category: 'layanan',
     },
-    { id: 'workspace' as ActiveTab, label: 'Cloud & Drive', icon: Cloud },
-    { id: 'config' as ActiveTab, label: 'Pengaturan & SIMPEG', icon: Settings },
+    { id: 'workspace' as ActiveTab, label: 'Cloud & Drive', icon: Cloud, category: 'sistem' },
+    { id: 'config' as ActiveTab, label: 'Pengaturan & SIMPEG', icon: Settings, category: 'sistem' },
   ];
+
+  const navItems = isRestrictedRole
+    ? allNavItems.filter((i) => i.category === 'presensi' || i.category === 'layanan')
+    : allNavItems;
 
   return (
     <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/80 shadow-xs">

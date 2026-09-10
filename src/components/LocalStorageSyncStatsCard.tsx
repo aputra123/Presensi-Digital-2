@@ -18,6 +18,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { AttendanceRecord, SchoolConfig } from '../types';
+import { syncManager } from '../utils/syncManager';
 
 interface LocalStorageSyncStatsCardProps {
   records: AttendanceRecord[];
@@ -45,12 +46,14 @@ export const LocalStorageSyncStatsCard: React.FC<LocalStorageSyncStatsCardProps>
   const pendingRecords = records.filter(
     (r) => r.syncStatus === 'pending_sync' || r.isOfflineRecord === true
   );
-  const pendingCount = pendingRecords.length;
+  const queueStatus = syncManager.getStatus();
+  const queuePendingCount = queueStatus.pendingCount;
+  const pendingCount = pendingRecords.length + queuePendingCount;
 
   const pendingStudents = pendingRecords.filter((r) => r.personType === 'student').length;
   const pendingTeachers = pendingRecords.filter((r) => r.personType === 'teacher').length;
   const pendingWithPhotos = pendingRecords.filter(
-    (r) => !!r.photoUrl || !!r.selfiePhotoUrl
+    (r) => !!r.photoUrl
   ).length;
 
   const totalRecords = records.length;

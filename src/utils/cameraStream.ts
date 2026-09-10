@@ -103,80 +103,15 @@ export const runPreflightHardwareCheck = async (
     console.warn('enumerateDevices error:', e);
   }
 
-  // 3. Pre-flight test probe to detect lock / busy by another process
-  try {
-    const testConstraints: MediaStreamConstraints = {
-      video: preferredFacing ? { facingMode: preferredFacing } : true,
-      audio: false,
-    };
-    const testStream = await navigator.mediaDevices.getUserMedia(testConstraints);
-    // Release immediately
-    testStream.getTracks().forEach((t) => t.stop());
-
-    return {
-      canAccess: true,
-      status: 'granted',
-      message: 'Perangkat keras kamera siap dan dapat diakses dengan baik.',
-      actionHint: 'Kamera terverifikasi bebas dari kunci proses latar belakang.',
-      videoDevices,
-    };
-  } catch (err: any) {
-    const errorName: string = err?.name || '';
-    const errorMsg: string = err?.message || String(err);
-    const lowerMsg = errorMsg.toLowerCase();
-
-    if (
-      errorName === 'NotReadableError' ||
-      errorName === 'TrackStartError' ||
-      lowerMsg.includes('in use') ||
-      lowerMsg.includes('could not start') ||
-      lowerMsg.includes('starting video failed') ||
-      lowerMsg.includes('busy')
-    ) {
-      return {
-        canAccess: false,
-        status: 'in_use',
-        message: 'Kamera sedang terkunci / digunakan oleh tab lain atau aplikasi lain.',
-        actionHint:
-          'Kamera terdeteksi sedang aktif di tab peramban lain, aplikasi Zoom, Google Meet, Microsoft Teams, atau software kamera lain. Tutup aplikasi/tab tersebut lalu klik "Coba Hubungkan Kembali".',
-        videoDevices,
-        errorDetail: `${errorName}: ${errorMsg}`,
-      };
-    }
-
-    if (errorName === 'NotAllowedError' || errorName === 'PermissionDeniedError') {
-      return {
-        canAccess: false,
-        status: 'denied',
-        message: 'Izin penggunaan kamera belum diberikan oleh pengguna.',
-        actionHint:
-          'Klik tombol "Izinkan" (Allow) pada jendela pop-up peramban untuk memberikan akses kamera.',
-        videoDevices,
-        errorDetail: `${errorName}: ${errorMsg}`,
-      };
-    }
-
-    if (errorName === 'NotFoundError' || errorName === 'DevicesNotFoundError') {
-      return {
-        canAccess: false,
-        status: 'no_device',
-        message: 'Sensor kamera tidak ditemukan pada sistem operasi.',
-        actionHint: 'Periksa sambungan kabel USB webcam atau driver perangkat keras Anda.',
-        videoDevices,
-        errorDetail: `${errorName}: ${errorMsg}`,
-      };
-    }
-
-    return {
-      canAccess: false,
-      status: 'prompt',
-      message: `Pemeriksaan hardware mendeteksi kendala: ${errorMsg}`,
-      actionHint:
-        'Sistem akan otomatis menggunakan fallback simulasi optik responsif agar antarmuka tidak blank/hitam.',
-      videoDevices,
-      errorDetail: `${errorName}: ${errorMsg}`,
-    };
-  }
+  // 3. Pre-flight check based on permission and device availability
+  // (Avoid opening and immediately killing a test stream, which creates race conditions on mobile/tablets)
+  return {
+    canAccess: true,
+    status: 'granted',
+    message: 'Perangkat keras modul kamera siap diakses.',
+    actionHint: 'Modul optik terdeteksi dan siap digunakan.',
+    videoDevices,
+  };
 };
 
 /**
@@ -912,22 +847,40 @@ export const startCameraHealthMonitor = (
   if (!video || !stream) return () => {};
 
   let blackScreenStrikeCount = 0;
+  let mutedStrikeCount = 0;
+  let isTriggered = false;
+  const startTime = Date.now();
+  const GRACE_PERIOD_MS = 3500; // Allow 3.5s warm-up period for mobile cameras to initialize sensors and auto-exposure
+
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
   const intervalId = setInterval(() => {
-    if (!video || video.paused || video.ended) return;
+    if (!video || video.paused || video.ended || isTriggered) return;
+
+    // Grace period for camera warmup
+    if (Date.now() - startTime < GRACE_PERIOD_MS) {
+      return;
+    }
 
     // Check track life status
     const tracks = stream.getVideoTracks();
     if (tracks.length === 0 || tracks.some((t) => t.readyState === 'ended')) {
+      isTriggered = true;
       onBlackDetected('Video track telah berakhir atau terputus.');
       return;
     }
 
+    // Muted tracks: require 3 consecutive strikes as mobile browsers momentarily mute during app transitions
     if (tracks.some((t) => t.muted)) {
-      onBlackDetected('Video track dalam status muted oleh browser/hardware.');
+      mutedStrikeCount++;
+      if (mutedStrikeCount >= 3) {
+        isTriggered = true;
+        onBlackDetected('Video track dalam status muted berkepanjangan oleh browser/hardware.');
+      }
       return;
+    } else {
+      mutedStrikeCount = 0;
     }
 
     if (video.readyState >= 2 && ctx) {
@@ -935,7 +888,8 @@ export const startCameraHealthMonitor = (
       const vh = video.videoHeight;
       if (vw <= 0 || vh <= 0) {
         blackScreenStrikeCount++;
-        if (blackScreenStrikeCount >= 2) {
+        if (blackScreenStrikeCount >= 3) {
+          isTriggered = true;
           onBlackDetected('Dimensi video 0x0 (invalid stream frame).');
           blackScreenStrikeCount = 0;
         }
@@ -949,7 +903,8 @@ export const startCameraHealthMonitor = (
         const isBlack = isFrameBlack(ctx, 160, 120);
         if (isBlack) {
           blackScreenStrikeCount++;
-          if (blackScreenStrikeCount >= 2) {
+          if (blackScreenStrikeCount >= 3) {
+            isTriggered = true;
             onBlackDetected('Layar hitam terdeteksi pada preview kamera.');
             blackScreenStrikeCount = 0;
           }

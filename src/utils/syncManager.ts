@@ -7,7 +7,9 @@ export type SyncActionType =
   | 'leave_request'
   | 'gtk_service'
   | 'backup_snapshot'
-  | 'config_update';
+  | 'config_update'
+  | 'apel_documentation'
+  | 'asn_table_sync';
 
 export interface SyncQueueItem {
   id: string;

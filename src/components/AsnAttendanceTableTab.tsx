@@ -46,6 +46,8 @@ import {
   AsnAttendanceRow,
   UserRole,
   ApelDocumentation,
+  ActivityLog,
+  ToastNotification,
 } from '../types';
 import { SignaturePad } from './SignaturePad';
 import { SignaturePadModal } from './SignaturePadModal';
@@ -63,6 +65,7 @@ import {
   generateRealisticPhoto,
   isFrameBlack,
 } from '../utils/cameraStream';
+import { syncManager } from '../utils/syncManager';
 
 interface AsnAttendanceTableTabProps {
   teachers: Teacher[];
@@ -72,6 +75,8 @@ interface AsnAttendanceTableTabProps {
   todayDate: string;
   onAddTeacher?: (teacher: Teacher) => void;
   onRecordAttendance?: (record: AttendanceRecord) => void;
+  onAddActivityLog?: (log: ActivityLog) => void;
+  onAddNotification?: (notification: ToastNotification) => void;
 }
 
 // Default ASN Teachers list if database is empty, to provide instantaneous automation
@@ -182,6 +187,8 @@ export const AsnAttendanceTableTab: React.FC<AsnAttendanceTableTabProps> = ({
   todayDate,
   onAddTeacher,
   onRecordAttendance,
+  onAddActivityLog,
+  onAddNotification,
 }) => {
   const [selectedDate, setSelectedDate] = useState<string>(todayDate || new Date().toISOString().split('T')[0]);
   const [filterAsnMode, setFilterAsnMode] = useState<'asn_only' | 'all'>('asn_only');
@@ -423,6 +430,12 @@ export const AsnAttendanceTableTab: React.FC<AsnAttendanceTableTabProps> = ({
     setApelSiangDoc(siang);
     try {
       localStorage.setItem(apelStorageKey, JSON.stringify({ apelPagi: pagi, apelSiang: siang }));
+      const globalRaw = localStorage.getItem('school_apel_docs');
+      let globalList: ApelDocumentation[] = globalRaw ? JSON.parse(globalRaw) : [];
+      globalList = globalList.filter((d) => d.date !== selectedDate);
+      if (pagi) globalList.push(pagi);
+      if (siang) globalList.push(siang);
+      localStorage.setItem('school_apel_docs', JSON.stringify(globalList));
     } catch {}
   };
 
@@ -753,6 +766,42 @@ export const AsnAttendanceTableTab: React.FC<AsnAttendanceTableTabProps> = ({
       saveApelDocsToStorage(apelPagiDoc, newDoc);
     }
 
+    try {
+      syncManager.enqueue('apel_documentation', newDoc);
+    } catch (e) {
+      console.warn('Sync queue notice:', e);
+    }
+
+    if (onAddActivityLog) {
+      onAddActivityLog({
+        id: `act_apel_${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        date: selectedDate,
+        time: apelForm.time,
+        category: 'apel_doc',
+        actor: {
+          name: apelForm.leaderName || config.principalName || 'Pembina Apel',
+          role: 'Pembina Apel / GTK',
+        },
+        action: `Unggah Dokumentasi ${apelModalType === 'apel_pagi' ? 'Apel Pagi' : 'Apel Siang'} ASN`,
+        description: `Dokumentasi foto ber-watermark resmi disimpan (${apelForm.attendanceCount} peserta hadir) di ${apelForm.placeName}. Status: ${navigator.onLine ? 'Tersinkron' : 'Tersimpan Offline'}.`,
+        targetName: apelModalType === 'apel_pagi' ? 'Apel Pagi BKD' : 'Apel Siang BKD',
+        status: 'success',
+        deviceInfo: typeof navigator !== 'undefined' && navigator.userAgent.includes('Mobile') ? 'Smartphone' : 'Laptop / PC',
+      });
+    }
+
+    if (onAddNotification) {
+      onAddNotification({
+        id: `notif_apel_${Date.now()}`,
+        title: `Dokumentasi ${apelModalType === 'apel_pagi' ? 'Apel Pagi' : 'Apel Siang'} Disimpan`,
+        message: `Foto dokumentasi ber-watermark resmi Pemda Taliabu berhasil disimpan.${!navigator.onLine ? ' Masuk antrean offline dan otomatis disinkronkan saat online.' : ''}`,
+        type: 'attendance',
+        timestamp: `${apelForm.time}`,
+        read: false,
+      });
+    }
+
     setIsApelModalOpen(false);
     stopApelCamera();
   };
@@ -878,9 +927,9 @@ export const AsnAttendanceTableTab: React.FC<AsnAttendanceTableTabProps> = ({
     updateTableRows(updated);
 
     // Sync with app-wide attendance records
-    if (onRecordAttendance) {
-      const targetRow = updated.find((r) => r.teacherId === teacherId);
-      if (targetRow) {
+    const targetRow = updated.find((r) => r.teacherId === teacherId);
+    if (targetRow) {
+      if (onRecordAttendance) {
         const newRecord: AttendanceRecord = {
           id: `att_asn_${teacherId}_${selectedDate}_${sessionType}`,
           personId: teacherId,
@@ -902,11 +951,62 @@ export const AsnAttendanceTableTab: React.FC<AsnAttendanceTableTabProps> = ({
           signatureInTime: sessionType === 'masuk' ? timestamp : targetRow.signatureInTime,
           signatureOutTime: sessionType === 'pulang' ? timestamp : targetRow.signatureOutTime,
           employmentStatus: targetRow.employmentStatus,
-          note: targetRow.notes,
+          syncStatus: !navigator.onLine ? 'pending_sync' : 'synced',
+          isOfflineRecord: !navigator.onLine,
+          syncedAt: navigator.onLine ? new Date().toISOString() : undefined,
+          note: targetRow.notes || `Tanda tangan absensi ${sessionType === 'masuk' ? 'masuk' : 'pulang'}`,
         };
         onRecordAttendance(newRecord);
       }
+
+      try {
+        syncManager.enqueue('asn_table_sync', {
+          date: selectedDate,
+          teacherId,
+          sessionType,
+          timestamp,
+          row: targetRow,
+        });
+      } catch (e) {
+        console.warn('Sync queue notice:', e);
+      }
+
+      // Record activity log for audit purposes
+      if (onAddActivityLog) {
+        const logEntry: ActivityLog = {
+          id: `act_sig_${Date.now()}_${teacherId}`,
+          timestamp: new Date().toISOString(),
+          date: selectedDate,
+          time: timestamp,
+          category: 'attendance',
+          actor: {
+            name: targetRow.name,
+            role: targetRow.employmentStatus ? `ASN (${targetRow.employmentStatus})` : 'Guru / GTK',
+          },
+          action: `Tanda Tangan Presensi ASN - Sesi ${sessionType === 'masuk' ? 'Masuk' : 'Pulang'}`,
+          description: `Presensi elektronik ASN ditandatangani oleh ${targetRow.name} (NIP: ${targetRow.nip || '-'}, ID: ${teacherId}) pada tanggal ${selectedDate} pukul ${timestamp} WITA.`,
+          targetId: teacherId,
+          targetName: targetRow.name,
+          status: 'success',
+          deviceInfo: typeof navigator !== 'undefined' && navigator.userAgent.includes('Mobile') ? 'Smartphone' : 'Laptop / PC',
+        };
+        onAddActivityLog(logEntry);
+      }
+
+      // Visual feedback notification
+      if (onAddNotification) {
+        onAddNotification({
+          id: `notif_sig_${Date.now()}`,
+          title: 'Tanda Tangan ASN Disimpan',
+          message: `Tanda tangan sesi ${sessionType === 'masuk' ? 'masuk' : 'pulang'} untuk ${targetRow.name} berhasil disimpan dan dicatat dalam log audit.`,
+          type: 'attendance',
+          timestamp: `${timestamp} WITA`,
+          read: false,
+        });
+      }
     }
+
+    setActiveModal((prev) => ({ ...prev, isOpen: false }));
   };
 
   // Re-build format from scratch based on current teachers & records

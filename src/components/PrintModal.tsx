@@ -60,6 +60,7 @@ export const PrintModal: React.FC<PrintModalProps> = ({
   allRecords,
   students = [],
   teachers: _teachers = [],
+  classes = [],
   asnRows = [],
   apelPagiDoc = null,
   apelSiangDoc = null,
@@ -115,14 +116,15 @@ export const PrintModal: React.FC<PrintModalProps> = ({
   // 2. CLASS & PERSONNEL FILTER STATE
   const [selectedTargetFilter, setSelectedTargetFilter] = useState<string>('ALL');
 
-  // Distinct classes from students and records
+  // Distinct classes from classes list, students, and records
   const distinctClasses = useMemo(() => {
+    const fromClasses = (classes || []).map((c) => c.name).filter(Boolean);
     const fromStudents = students.map((s) => s.className).filter(Boolean);
     const fromRecords = masterRecords
       .filter((r) => r.personType === 'student' && r.classOrSubject)
       .map((r) => r.classOrSubject);
-    return Array.from(new Set([...fromStudents, ...fromRecords])).sort();
-  }, [students, masterRecords]);
+    return Array.from(new Set([...fromClasses, ...fromStudents, ...fromRecords])).sort();
+  }, [classes, students, masterRecords]);
 
   // 3. DIGITAL SIGNATURE OF LEADERSHIP
   const [includeSignatureBlock, setIncludeSignatureBlock] = useState<boolean>(true);
@@ -214,9 +216,9 @@ export const PrintModal: React.FC<PrintModalProps> = ({
       if (selectedTargetFilter === 'TEACHERS_HONORER') {
         return (
           r.personType === 'teacher' &&
-          (r.employmentStatus === 'Honorer' ||
-            r.employmentStatus === 'GTT' ||
-            r.employmentStatus === 'PTT')
+          (r.employmentStatus === 'HONORER' ||
+            r.employmentStatus === 'GTT_PTT' ||
+            (r.employmentStatus as unknown as string) === 'Honorer')
         );
       }
 
