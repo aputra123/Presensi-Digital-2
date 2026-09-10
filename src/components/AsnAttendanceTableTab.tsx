@@ -63,6 +63,7 @@ import {
   CameraDiagnosticState,
   runPreflightHardwareCheck,
   generateRealisticPhoto,
+  renderRealisticIllustration,
   isFrameBlack,
 } from '../utils/cameraStream';
 import { syncManager } from '../utils/syncManager';
@@ -499,14 +500,17 @@ export const AsnAttendanceTableTab: React.FC<AsnAttendanceTableTabProps> = ({
       lastErrorMessage: undefined,
     }));
 
-    const preflight = await runPreflightHardwareCheck(facingMode);
-    if (!preflight.canAccess) {
-      setCameraDiagnostic((prev) => ({
-        ...prev,
-        isLockedByOtherProcess: preflight.status === 'in_use',
-        lastErrorMessage: preflight.message,
-      }));
-      return;
+    try {
+      const preflight = await runPreflightHardwareCheck(facingMode);
+      if (!preflight.canAccess && preflight.status === 'in_use') {
+        setCameraDiagnostic((prev) => ({
+          ...prev,
+          isLockedByOtherProcess: true,
+          lastErrorMessage: preflight.message,
+        }));
+      }
+    } catch {
+      // Diagnostic check advisory only
     }
 
     try {
@@ -629,14 +633,11 @@ export const AsnAttendanceTableTab: React.FC<AsnAttendanceTableTabProps> = ({
     }
 
     if (isBlack) {
-      const realisticBg = generateRealisticPhoto('apel', {
+      renderRealisticIllustration(ctx, w, h, 'apel', {
         schoolName: config.schoolName,
         type: docType,
         placeName: apelForm.placeName || (docType === 'apel_pagi' ? 'Lapangan Utama Upacara SMPN 4 Satap' : 'Halaman Depan Kantor Guru SMPN 4 Satap'),
       });
-      const img = new Image();
-      img.src = realisticBg;
-      ctx.drawImage(img, 0, 0, w, h);
     }
 
     // Draw Official Government Watermark Badge (Adaptive Bottom Right / Bottom Center)

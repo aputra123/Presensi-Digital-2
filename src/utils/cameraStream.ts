@@ -62,17 +62,16 @@ export const runPreflightHardwareCheck = async (
   }
 
   // 1. Check browser permissions state if Permissions API supported
+  // NOTE: In iframes or some browsers, permissions.query can report 'denied' or 'prompt' before user gesture.
+  // We report the advisory status but allow canAccess: true so getUserMedia() is still directly attempted on user action.
+  let permStatus: 'granted' | 'prompt' | 'denied' = 'granted';
   if (navigator.permissions && navigator.permissions.query) {
     try {
       const perm = await navigator.permissions.query({ name: 'camera' as PermissionName });
       if (perm.state === 'denied') {
-        return {
-          canAccess: false,
-          status: 'denied',
-          message: 'Izin kamera diblokir pada peramban ini.',
-          actionHint: 'Klik ikon gembok di bilah alamat (URL) peramban, setel izin Kamera ke "Izinkan", lalu muat ulang halaman.',
-          videoDevices: [],
-        };
+        permStatus = 'denied';
+      } else if (perm.state === 'prompt') {
+        permStatus = 'prompt';
       }
     } catch {
       // Ignore if permission query name 'camera' is not supported in some browsers
@@ -94,12 +93,15 @@ export const runPreflightHardwareCheck = async (
   }
 
   // 3. Pre-flight check based on permission and device availability
-  // Note: Modern browsers hide device labels and may report empty device list until getUserMedia() is called once.
   return {
-    canAccess: true,
-    status: 'granted',
-    message: 'Perangkat keras modul kamera siap diakses.',
-    actionHint: 'Modul optik terdeteksi dan siap digunakan.',
+    canAccess: true, // Always allow attempting getUserMedia upon user interaction
+    status: permStatus,
+    message: permStatus === 'denied' 
+      ? 'Izin kamera mungkin dibatasi pada peramban. Klik Izinkan saat dialog peramban muncul.'
+      : 'Perangkat keras modul kamera siap diakses.',
+    actionHint: permStatus === 'denied'
+      ? 'Jika kamera tidak muncul, klik ikon gembok/kamera di bilah alamat (URL) peramban dan pilih Izinkan Kamera.'
+      : 'Modul optik terdeteksi dan siap digunakan.',
     videoDevices,
   };
 };
@@ -150,10 +152,13 @@ export const isFrameBlack = (
 };
 
 /**
- * Generates an authentic, high-fidelity school photo documentation or biometric photo
- * ensuring the resulting photo is NEVER pitch black even if physical webcam is inaccessible.
+ * Synchronously renders authentic, high-fidelity school photo documentation or biometric photo directly to a CanvasRenderingContext2D.
+ * Completely offline-safe, with zero asynchronous image loading, guaranteeing NO black screens.
  */
-export const generateRealisticPhoto = (
+export const renderRealisticIllustration = (
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
   mode: 'apel' | 'selfie',
   options?: {
     type?: 'apel_pagi' | 'apel_siang';
@@ -162,21 +167,7 @@ export const generateRealisticPhoto = (
     schoolName?: string;
     placeName?: string;
   }
-): string => {
-  const canvas = document.createElement('canvas');
-  if (mode === 'apel') {
-    canvas.width = 1280;
-    canvas.height = 960;
-  } else {
-    canvas.width = 640;
-    canvas.height = 640;
-  }
-
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return '';
-
-  const w = canvas.width;
-  const h = canvas.height;
+) => {
   const isMorning = options?.type !== 'apel_siang';
 
   if (mode === 'apel') {
@@ -371,6 +362,35 @@ export const generateRealisticPhoto = (
       ctx.fillText(options.personName, w / 2, h / 2 + 175);
     }
   }
+};
+
+/**
+ * Generates an authentic, high-fidelity school photo documentation or biometric photo
+ * ensuring the resulting photo is NEVER pitch black even if physical webcam is inaccessible.
+ */
+export const generateRealisticPhoto = (
+  mode: 'apel' | 'selfie',
+  options?: {
+    type?: 'apel_pagi' | 'apel_siang';
+    personName?: string;
+    avatarUrl?: string;
+    schoolName?: string;
+    placeName?: string;
+  }
+): string => {
+  const canvas = document.createElement('canvas');
+  if (mode === 'apel') {
+    canvas.width = 1280;
+    canvas.height = 960;
+  } else {
+    canvas.width = 640;
+    canvas.height = 640;
+  }
+
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return '';
+
+  renderRealisticIllustration(ctx, canvas.width, canvas.height, mode, options);
 
   return canvas.toDataURL('image/jpeg', 0.94);
 };
@@ -817,7 +837,7 @@ export const startCameraHealthMonitor = (
   let mutedStrikeCount = 0;
   let isTriggered = false;
   const startTime = Date.now();
-  const GRACE_PERIOD_MS = 6000; // Allow 6s warm-up period for webcams and mobile cameras to initialize sensors and auto-exposure
+  const GRACE_PERIOD_MS = 8000; // Allow 8s warm-up period for webcams and mobile cameras to initialize sensors and auto-exposure
 
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
@@ -908,14 +928,20 @@ export const attachStreamToVideoElement = (
   video.setAttribute('muted', 'true');
   video.setAttribute('autoplay', 'true');
 
-  if (video.srcObject !== stream) {
+  const isSameStream = video.srcObject === stream;
+  if (!isSameStream) {
     video.srcObject = stream;
+  } else if (!video.paused && video.readyState >= 2) {
+    // Already attached and actively streaming frames, no action required
+    return;
   }
 
   const triggerPlay = () => {
-    video.play().catch((err) => {
-      console.warn('Video playback trigger notice (handled):', err);
-    });
+    if (video.paused) {
+      video.play().catch((err) => {
+        console.warn('Video playback trigger notice (handled):', err);
+      });
+    }
   };
 
   video.onloadedmetadata = triggerPlay;
@@ -926,7 +952,6 @@ export const attachStreamToVideoElement = (
   triggerPlay();
 
   // Retry trigger after small delay for slow mobile initializations
-  setTimeout(triggerPlay, 150);
-  setTimeout(triggerPlay, 500);
+  setTimeout(triggerPlay, 200);
 };
 

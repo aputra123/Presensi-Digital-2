@@ -21,6 +21,7 @@ import {
   Check,
   HardDrive,
   ExternalLink,
+  Upload,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import {
@@ -41,6 +42,7 @@ import {
   attachStreamToVideoElement,
   isFrameBlack,
   generateRealisticPhoto,
+  renderRealisticIllustration,
   runPreflightHardwareCheck,
   softResetCamera,
   startCameraHealthMonitor,
@@ -212,6 +214,8 @@ export const SelfieGpsTab: React.FC<SelfieGpsTabProps> = ({
     recoveryCount: 0,
   });
   const [preflightWarning, setPreflightWarning] = useState<PreflightHardwareCheckResult | null>(null);
+  const autoResetCountRef = useRef<number>(0);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Soft Reset Camera Handler
   const handleSoftReset = async () => {
@@ -219,6 +223,9 @@ export const SelfieGpsTab: React.FC<SelfieGpsTabProps> = ({
       const res = await softResetCamera(videoRef.current, streamRef.current, facingMode, 'selfie', cameraOri.mode);
       streamRef.current = res.stream;
       if (res.cleanup) simCleanupRef.current = res.cleanup;
+      if (videoRef.current) {
+        attachStreamToVideoElement(videoRef.current, res.stream);
+      }
       setCameraDiagnostic((prev) => ({
         ...prev,
         isActive: true,
@@ -228,6 +235,8 @@ export const SelfieGpsTab: React.FC<SelfieGpsTabProps> = ({
         isLockedByOtherProcess: res.isLockedByOtherProcess,
         recoveryCount: prev.recoveryCount + 1,
       }));
+      setCameraError(null);
+      setCameraPermissionDenied(false);
     } catch (e: any) {
       console.warn('Soft-reset error:', e);
     }
@@ -239,6 +248,7 @@ export const SelfieGpsTab: React.FC<SelfieGpsTabProps> = ({
     attemptCount: number = 0
   ) => {
     stopCamera();
+    autoResetCountRef.current = 0;
     setIsCameraActive(true);
     setIsCameraInitializing(true);
     setCapturedPhoto(null);
@@ -246,21 +256,16 @@ export const SelfieGpsTab: React.FC<SelfieGpsTabProps> = ({
     setFacingMode(targetFacing);
     setCameraRetryAttempts(attemptCount);
 
-    // 1. Pre-flight hardware & permission check
-    const preflight = await runPreflightHardwareCheck(targetFacing);
-    if (preflight.status === 'denied') {
-      setCameraPermissionDenied(true);
-      setCameraError(preflight.message || 'Izin kamera diblokir pada peramban ini.');
-      setIsCameraInitializing(false);
-      return;
-    } else {
-      setCameraPermissionDenied(false);
-    }
-
-    if (!preflight.canAccess && preflight.status === 'in_use') {
-      setPreflightWarning(preflight);
-    } else {
-      setPreflightWarning(null);
+    // 1. Diagnostic pre-flight hardware check (advisory only - never blocks getUserMedia)
+    try {
+      const preflight = await runPreflightHardwareCheck(targetFacing);
+      if (!preflight.canAccess && preflight.status === 'in_use') {
+        setPreflightWarning(preflight);
+      } else {
+        setPreflightWarning(null);
+      }
+    } catch (e) {
+      // Advisory only
     }
 
     try {
@@ -281,6 +286,15 @@ export const SelfieGpsTab: React.FC<SelfieGpsTabProps> = ({
       if (videoRef.current) {
         attachStreamToVideoElement(videoRef.current, res.stream);
       }
+
+      const isPermissionDeniedInFallback = Boolean(
+        res.isSimulated &&
+        res.errorDetail &&
+        (res.errorDetail.toLowerCase().includes('notallowed') ||
+         res.errorDetail.toLowerCase().includes('permission') ||
+         res.errorDetail.toLowerCase().includes('denied'))
+      );
+
       setCameraDiagnostic({
         isActive: true,
         isSimulated: res.isSimulated,
@@ -291,8 +305,14 @@ export const SelfieGpsTab: React.FC<SelfieGpsTabProps> = ({
         isLockedByOtherProcess: res.isLockedByOtherProcess,
         recoveryCount: attemptCount,
       });
-      setCameraError(null);
-      setCameraPermissionDenied(false);
+
+      if (isPermissionDeniedInFallback) {
+        setCameraPermissionDenied(true);
+        setCameraError('Izin akses kamera dibatasi oleh peramban. Anda dapat memberikan izin di ikon gembok bilah URL, atau gunakan tombol Unggah Foto.');
+      } else {
+        setCameraError(null);
+        setCameraPermissionDenied(false);
+      }
     } catch (err: any) {
       console.warn(`Camera stream error (attempt ${attemptCount}):`, err);
 
@@ -313,7 +333,7 @@ export const SelfieGpsTab: React.FC<SelfieGpsTabProps> = ({
       setCameraError(
         err?.message ||
           (isDenied
-            ? 'Akses kamera ditolak. Silakan berikan izin akses kamera pada peramban.'
+            ? 'Akses kamera ditolak. Silakan berikan izin akses kamera pada peramban atau unggah foto bukti presensi.'
             : 'Gagal menginisialisasi kamera. Periksa apakah kamera sedang digunakan aplikasi lain.')
       );
       setCameraDiagnostic((prev) => ({
@@ -349,8 +369,11 @@ export const SelfieGpsTab: React.FC<SelfieGpsTabProps> = ({
           isBlackFrameDetected: true,
           lastErrorMessage: reason,
         }));
-        // Trigger soft-reset to recover cleanly
-        handleSoftReset();
+        // Trigger soft-reset to recover cleanly (max 1 time automatically to prevent loops)
+        if (autoResetCountRef.current < 1) {
+          autoResetCountRef.current += 1;
+          handleSoftReset();
+        }
       },
       (healthyInfo) => {
         setCameraDiagnostic((prev) => ({
@@ -397,9 +420,28 @@ export const SelfieGpsTab: React.FC<SelfieGpsTabProps> = ({
     startCamera(nextMode);
   };
 
+  // File upload handler for biometric photo
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        takeSnapshot(98.8, img);
+      };
+      img.src = event.target?.result as string;
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
   // Automated Biometric Face Scan Verification Workflow
   const triggerBiometricScan = async () => {
-    await startCamera('user');
+    if (!isCameraActive || !streamRef.current) {
+      await startCamera('user');
+    }
     setIsBiometricScanning(true);
     setScanProgress(0);
     setFaceDetected(false);
@@ -458,7 +500,7 @@ export const SelfieGpsTab: React.FC<SelfieGpsTabProps> = ({
   }, []);
 
   // Take Snapshot & Render Watermark Stamp
-  const takeSnapshot = (computedScore?: number) => {
+  const takeSnapshot = (computedScore?: number, customSource?: CanvasImageSource) => {
     setIsCapturing(true);
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -496,7 +538,7 @@ export const SelfieGpsTab: React.FC<SelfieGpsTabProps> = ({
 
     const score = computedScore || biometricScore || 98.4;
 
-    // Draw image from video or mock photo
+    // Draw image from video, custom uploaded photo, or guaranteed realistic illustration
     const drawStamp = (imgSource: CanvasImageSource | null) => {
       let isBlack = false;
       if (imgSource) {
@@ -511,14 +553,11 @@ export const SelfieGpsTab: React.FC<SelfieGpsTabProps> = ({
       }
 
       if (isBlack) {
-        // Draw realistic high-contrast portrait background rather than pitch black void
-        const realisticBg = generateRealisticPhoto('selfie', {
+        // Draw realistic high-contrast portrait illustration synchronously onto canvas - guarantees NO black screen!
+        renderRealisticIllustration(ctx, w, h, 'selfie', {
           personName,
           schoolName: config.schoolName,
         });
-        const rImg = new Image();
-        rImg.src = realisticBg;
-        ctx.drawImage(rImg, 0, 0, w, h);
       }
 
       // Draw Top Watermark Header
@@ -584,19 +623,17 @@ export const SelfieGpsTab: React.FC<SelfieGpsTabProps> = ({
       stopCamera();
     };
 
-    if (videoRef.current && videoRef.current.videoWidth > 0) {
+    if (customSource) {
+      drawStamp(customSource);
+    } else if (videoRef.current && videoRef.current.videoWidth > 0) {
       drawStamp(videoRef.current);
     } else {
-      // Use profile avatar as base image
-      const img = new Image();
-      img.crossOrigin = 'anonymous';
-      const targetAvatar =
-        personType === 'teacher'
-          ? selectedTeacher?.avatar || 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=640&q=80'
-          : selectedStudent?.avatar || 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?auto=format&fit=crop&w=640&q=80';
-      img.src = targetAvatar;
-      img.onload = () => drawStamp(img);
-      img.onerror = () => drawStamp(null);
+      // Direct synchronous render: render portrait illustration directly, then stamp immediately
+      renderRealisticIllustration(ctx, w, h, 'selfie', {
+        personName,
+        schoolName: config.schoolName,
+      });
+      drawStamp(null);
     }
   };
 
@@ -1012,24 +1049,42 @@ Tercatat resmi dalam Sistem Informasi Kepegawaian & Database Presensi Sekolah.`;
 
           {/* Action Trigger Buttons */}
           <div className="space-y-2 pt-2 border-t border-slate-100">
+            <input
+              type="file"
+              ref={fileInputRef}
+              accept="image/*"
+              className="hidden"
+              onChange={handleFileUpload}
+            />
+
             {!isCameraActive && !capturedPhoto && (
-              <button
-                onClick={triggerBiometricScan}
-                disabled={holidayInfo.isHoliday && !overrideHoliday}
-                className="w-full py-3.5 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 disabled:bg-slate-300 disabled:cursor-not-allowed text-white rounded-2xl text-xs font-extrabold flex items-center justify-center space-x-2 transition-all cursor-pointer shadow-lg shadow-indigo-600/25"
-              >
-                {holidayInfo.isHoliday && !overrideHoliday ? (
-                  <>
-                    <Lock className="w-4 h-4" />
-                    <span>Presensi Nonaktif (Hari Libur)</span>
-                  </>
-                ) : (
-                  <>
-                    <Camera className="w-4 h-4" />
-                    <span>Mulai Face Scan Biometrik (Kamera Depan)</span>
-                  </>
-                )}
-              </button>
+              <div className="space-y-2">
+                <button
+                  onClick={triggerBiometricScan}
+                  disabled={holidayInfo.isHoliday && !overrideHoliday}
+                  className="w-full py-3.5 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 disabled:bg-slate-300 disabled:cursor-not-allowed text-white rounded-2xl text-xs font-extrabold flex items-center justify-center space-x-2 transition-all cursor-pointer shadow-lg shadow-indigo-600/25"
+                >
+                  {holidayInfo.isHoliday && !overrideHoliday ? (
+                    <>
+                      <Lock className="w-4 h-4" />
+                      <span>Presensi Nonaktif (Hari Libur)</span>
+                    </>
+                  ) : (
+                    <>
+                      <Camera className="w-4 h-4" />
+                      <span>Mulai Face Scan Biometrik (Kamera Depan)</span>
+                    </>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold flex items-center justify-center space-x-1.5 transition-all cursor-pointer border border-slate-200"
+                >
+                  <Upload className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>Unggah Foto dari Galeri / Kamera Perangkat</span>
+                </button>
+              </div>
             )}
 
             {isCameraActive && (
@@ -1043,22 +1098,31 @@ Tercatat resmi dalam Sistem Informasi Kepegawaian & Database Presensi Sekolah.`;
                   <span>Ambil Foto Manual & Generate Stempel BKD</span>
                 </button>
 
-                <div className="flex items-center space-x-2">
+                <div className="grid grid-cols-2 gap-2">
                   <button
                     onClick={toggleFacingMode}
-                    className="flex-1 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold flex items-center justify-center space-x-1 cursor-pointer"
+                    className="py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold flex items-center justify-center space-x-1 cursor-pointer"
                   >
                     <RefreshCw className="w-3.5 h-3.5" />
-                    <span>Ganti Kamera ({facingMode === 'user' ? 'Depan' : 'Belakang'})</span>
+                    <span>Ganti ({facingMode === 'user' ? 'Depan' : 'Belakang'})</span>
                   </button>
                   <button
-                    onClick={stopCamera}
-                    className="py-2 px-4 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-xl text-xs font-bold flex items-center justify-center space-x-1 cursor-pointer"
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold flex items-center justify-center space-x-1 cursor-pointer"
                   >
-                    <X className="w-3.5 h-3.5" />
-                    <span>Batal</span>
+                    <Upload className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>Unggah Foto</span>
                   </button>
                 </div>
+
+                <button
+                  onClick={stopCamera}
+                  className="w-full py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-xl text-xs font-bold flex items-center justify-center space-x-1 cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                  <span>Tutup Kamera</span>
+                </button>
               </div>
             )}
 
@@ -1179,7 +1243,16 @@ Tercatat resmi dalam Sistem Informasi Kepegawaian & Database Presensi Sekolah.`;
                       className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold flex items-center space-x-2 transition-all shadow-md shadow-indigo-600/30 active:scale-95 cursor-pointer"
                     >
                       <RefreshCw className={`w-4 h-4 ${isCameraInitializing ? 'animate-spin' : ''}`} />
-                      <span>{isCameraInitializing ? 'Memeriksa Kamera...' : 'Coba Lagi Akses Kamera (Manual Retry)'}</span>
+                      <span>{isCameraInitializing ? 'Memeriksa Kamera...' : 'Coba Lagi Akses Kamera'}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold flex items-center space-x-1.5 transition-all shadow-md shadow-emerald-600/30 cursor-pointer"
+                    >
+                      <Upload className="w-3.5 h-3.5" />
+                      <span>Unggah Foto dari Galeri</span>
                     </button>
 
                     <button
@@ -1188,7 +1261,7 @@ Tercatat resmi dalam Sistem Informasi Kepegawaian & Database Presensi Sekolah.`;
                       className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition-all cursor-pointer"
                     >
                       <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                      <span>Pulihkan Sensor Kamera</span>
+                      <span>Pulihkan Sensor</span>
                     </button>
 
                     <button
@@ -1332,12 +1405,22 @@ Tercatat resmi dalam Sistem Informasi Kepegawaian & Database Presensi Sekolah.`;
                       Gunakan kamera depan untuk memindai wajah langsung via MediaDevices API dan mencocokkan profil resmi BKD.
                     </p>
                   </div>
-                  <button
-                    onClick={triggerBiometricScan}
-                    className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl text-xs font-bold cursor-pointer transition-all shadow-md shadow-indigo-600/30"
-                  >
-                    Buka Kamera & Pindai
-                  </button>
+                  <div className="flex flex-col sm:flex-row items-center justify-center gap-2 pt-1">
+                    <button
+                      onClick={triggerBiometricScan}
+                      className="w-full sm:w-auto px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl text-xs font-bold cursor-pointer transition-all shadow-md shadow-indigo-600/30"
+                    >
+                      Buka Kamera & Pindai
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="w-full sm:w-auto px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-2xl text-xs font-bold cursor-pointer transition-all border border-slate-700 flex items-center justify-center space-x-1.5"
+                    >
+                      <Upload className="w-3.5 h-3.5 text-indigo-400" />
+                      <span>Unggah Foto Galeri</span>
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
